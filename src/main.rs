@@ -100,8 +100,37 @@ fn run_gui(force_log: bool, database: Option<std::path::PathBuf>) -> ExitCode {
     }
     log::info!("starting opentrack {}", env!("CARGO_PKG_VERSION"));
 
+    // A file given with --database is always used, rather than a server.
+    let use_server = settings.use_server && database.is_none();
     let db_path = database.unwrap_or_else(paths::database_file);
-    let db = match db::Db::open(&db_path) {
+    let opened = if use_server {
+        match db::Db::connect(&settings.server) {
+            Ok(db) => Ok(db),
+            Err(e) => {
+                log::error!("could not connect to the database server");
+                let question = format!(
+                    "{}\n\n{}",
+                    t!("startup-server-failed", error = format!("{e:#}")),
+                    t!("startup-server-fallback")
+                );
+                let fall_back = rfd::MessageDialog::new()
+                    .set_title(APP_TITLE)
+                    .set_description(question)
+                    .set_buttons(rfd::MessageButtons::YesNo)
+                    .set_level(rfd::MessageLevel::Error)
+                    .show()
+                    == rfd::MessageDialogResult::Yes;
+                if !fall_back {
+                    return ExitCode::FAILURE;
+                }
+                start_status = format!("{} {start_status}", t!("status-built-in-fallback"));
+                db::Db::open(&db_path)
+            }
+        }
+    } else {
+        db::Db::open(&db_path)
+    };
+    let db = match opened {
         Ok(db) => db,
         Err(e) => {
             let message = t!("error-open-database", path = db_path.display().to_string(), error = format!("{e:#}"));

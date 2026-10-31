@@ -232,26 +232,11 @@ pub fn import_json(db: &mut Db, path: &Path, replace: bool) -> Result<(usize, us
 pub fn export_sql(db: &Db, path: &Path) -> Result<usize> {
     let categories = db.categories()?;
     let entries = db.all_entries()?;
-    let mut sql = String::from(
-        "-- Exported from Open Budget Tracker.\n\
-         SET NAMES utf8mb4;\n\n\
-         CREATE TABLE IF NOT EXISTS `category` (\n    \
-             `id` INT NOT NULL PRIMARY KEY AUTO_INCREMENT,\n    \
-             `short` VARCHAR(32) COLLATE utf8mb4_bin NOT NULL UNIQUE\n\
-         ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;\n\n\
-         CREATE TABLE IF NOT EXISTS `spending` (\n    \
-             `line` INT NOT NULL PRIMARY KEY AUTO_INCREMENT,\n    \
-             `name` VARCHAR(160) NOT NULL,\n    \
-             `date` DATE NOT NULL,\n    \
-             `price` DECIMAL(8,2) NOT NULL,\n    \
-             `bucket` INT NOT NULL,\n    \
-             FOREIGN KEY (`bucket`) REFERENCES `category` (`id`)\n\
-         ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;\n\n\
-         CREATE TABLE IF NOT EXISTS `budget` (\n    \
-             `bucket` INT NOT NULL PRIMARY KEY,\n    \
-             `monthly` DECIMAL(8,2) NOT NULL,\n    \
-             FOREIGN KEY (`bucket`) REFERENCES `category` (`id`) ON DELETE CASCADE\n\
-         ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;\n",
+    // The same tables the app makes on a server, so an export can be loaded
+    // and then used from the app.
+    let mut sql = format!(
+        "-- Exported from Open Budget Tracker.\nSET NAMES utf8mb4;\n\n{};\n",
+        crate::db::MARIADB_SCHEMA.join(";\n\n")
     );
     if !categories.is_empty() {
         let rows: Vec<String> = categories.iter().map(|c| format!("({}, {})", c.id, sql_string(&c.short))).collect();

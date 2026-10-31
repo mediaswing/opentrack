@@ -463,6 +463,53 @@ log-dir-not-absolute = Type the full path of a folder for the log, or choose one
 log-dir-saved = Saved the log folder. Tick Write a debug log to start it.
 error-open-folder = Could not open { $dir }: { $error }
 
+## Database, on the Settings tab, and using a MySQL or MariaDB server
+
+settings-database-heading = Database
+settings-database-label = Where the budget is kept
+settings-database-built-in = Built into the app, on this computer
+settings-database-server = On a MySQL or MariaDB server
+settings-database-in-use = In use now: { $location }
+settings-use-built-in = Use the built-in database
+settings-server-host = Server
+settings-server-port = Port
+settings-server-database = Database
+settings-server-user = User name
+settings-server-password = Password
+settings-server-tls = Encrypt the connection (TLS)
+settings-server-note = The app makes its tables in the database if they aren't there yet. The password is kept in the settings file on this computer. Turn off encryption only for a server on this computer or on a network you trust.
+settings-server-connect = Connect and use this server
+settings-server-port-invalid = "{ $text }" is not a port number. Type a number from 1 to 65535, such as 3306.
+# A database on a server, such as "budget on db.example.com:3306".
+server-describe = { $database } on { $host }:{ $port }
+server-host-missing = Type the name or address of the server.
+server-database-missing = Type the name of the database on the server.
+error-connect-server = Could not connect to { $server }
+server-tls-hint = The server's certificate isn't one this computer trusts, which is usual for a server that made its own. If the server is on this computer or a network you trust, turn off "Encrypt the connection" and connect again.
+error-server-tables = Could not set up the tables in { $server }
+server-not-innodb = These tables don't use InnoDB, so changes to them can't be made all at once: { $tables }. Convert them with ALTER TABLE … ENGINE = InnoDB.
+server-no-copy = The budget is on a database server, so it can't be copied to a file here. Use the server's own backup tools, or export a JSON backup.
+server-copy-title = Copy your budget to the server?
+server-copy-question = { $server } has no entries yet. Copy { $count ->
+    [one] the 1 entry
+   *[other] the { $count } entries
+} and { $categories ->
+    [one] 1 category
+   *[other] { $categories } categories
+} from the database in use now into it?
+server-copy-replaces = Anything already there, such as its starting categories, will be replaced. The database in use now is left as it is.
+error-copy-to-server = Could not copy the budget to { $server }: { $error }
+server-in-use = Now using { $server }.
+server-in-use-copied = Copied { $count ->
+    [one] 1 entry
+   *[other] { $count } entries
+} to { $server }, and now using it.
+built-in-in-use = Now using the built-in database at { $path }.
+startup-server-failed = Could not connect to the database server. { $error }
+startup-server-fallback = Use the built-in database this time? Your settings aren't changed, so the server is tried again next time.
+status-built-in-fallback = The database server couldn't be reached, so the built-in database is in use for now.
+data-server-note = The budget is on a MySQL or MariaDB server. Back it up with the server's own tools, or export a JSON backup above.
+
 ## The categories a new budget starts with, at most 32 characters each
 
 start-entertainment = Entertainment
@@ -493,6 +540,7 @@ entry-gone = Entry { $line } no longer exists.
 entry-name-missing = Type what the money was spent on.
 entry-name-too-long = Names can be at most { $max } characters long.
 entry-amount-too-large = Amounts can be at most 999,999.99.
+entry-year-range = Dates must be in the years { $first } to { $last }.
 # Where a problem is, in an error such as "entry 12: Names can be at most…".
 context-category = category { $id } ({ $name })
 context-budget = budget for category { $name }

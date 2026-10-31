@@ -106,6 +106,16 @@ pub(super) fn text_field(ui: &mut Ui, id: Id, label: &str, value: &mut String, h
     .inner
 }
 
+/// A text box for a password: as `text_field`, with what is typed hidden.
+pub(super) fn password_field(ui: &mut Ui, id: Id, label: &str, value: &mut String) -> egui::Response {
+    ui.horizontal(|ui| {
+        let label = ui.label(label);
+        let edit = egui::TextEdit::singleline(value).id(id).password(true).desired_width(f32::INFINITY);
+        ui.add_sized([ui.available_width(), CONTROL_HEIGHT], edit).labelled_by(label.id)
+    })
+    .inner
+}
+
 /// A read-only text box, labelled on the same line, that a screen reader can
 /// still focus and review.
 pub(super) fn read_only_field(ui: &mut Ui, label: &str, value: &str) {

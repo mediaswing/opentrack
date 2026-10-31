@@ -8,8 +8,16 @@ const APP_DIR: &str = "OpenBudgetTracker";
 const APP_DIR: &str = "opentrack";
 
 /// Settings. On Windows this is `%APPDATA%\OpenBudgetTracker`.
+#[cfg(not(test))]
 pub fn config_dir() -> PathBuf {
     dirs::config_dir().unwrap_or_else(std::env::temp_dir).join(APP_DIR)
+}
+
+/// In tests, a folder of their own, so a test that changes a setting never
+/// writes over the real ones.
+#[cfg(test)]
+pub fn config_dir() -> PathBuf {
+    std::env::temp_dir().join(format!("opentrack-test-settings-{}", std::process::id()))
 }
 
 pub fn settings_file() -> PathBuf {

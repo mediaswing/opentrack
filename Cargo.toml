@@ -33,6 +33,7 @@ anyhow = "1"
 # Translations of the interface, from the files in assets/i18n.
 fluent-bundle = "0.16"
 unic-langid = "0.9"
+mysql = { version = "28", default-features = false, features = ["minimal-rust", "rustls-tls-ring"] }
 
 [dev-dependencies]
 # Reads the translation files in tests, to check them against each other.

@@ -3,7 +3,11 @@
 //! update checks.
 
 use super::*;
+use crate::settings::Server;
 use std::path::PathBuf;
+
+const SERVER_HOST_ID: &str = "server_host";
+const SERVER_PORT_ID: &str = "server_port";
 
 impl BudgetApp {
     /// Asks GitHub for a newer release on another thread. `requested` is
@@ -149,6 +153,123 @@ impl BudgetApp {
         }
     }
 
+    /// Connects to the server typed on the Settings tab and, if that works,
+    /// keeps the budget there from now on. If the server has no entries,
+    /// it is offered a copy of the budget in use.
+    pub(super) fn use_server(&mut self) {
+        let port = match self.server_port_input.trim().parse::<u16>() {
+            Ok(port) if port > 0 => port,
+            _ => {
+                self.focus = Some(Id::new(SERVER_PORT_ID));
+                return self.show_error(t!("settings-server-port-invalid", text = self.server_port_input.trim()));
+            }
+        };
+        let form = &self.server_form;
+        let server = Server {
+            host: form.host.trim().to_owned(),
+            port,
+            database: form.database.trim().to_owned(),
+            user: form.user.trim().to_owned(),
+            ..form.clone()
+        };
+        log::info!("connecting to a database server");
+        let mut db = match Db::connect(&server) {
+            Ok(db) => db,
+            Err(e) => {
+                self.focus = Some(Id::new(SERVER_HOST_ID));
+                return self.show_error(format!("{e:#}"));
+            }
+        };
+        let copied = match self.offer_copy(&mut db) {
+            Ok(copied) => copied,
+            Err(e) => {
+                let error = format!("{e:#}");
+                return self.show_error(t!("error-copy-to-server", server = db.location(), error = error));
+            }
+        };
+        self.db = db;
+        self.settings.use_server = true;
+        self.settings.server = server.clone();
+        self.server_form = server;
+        self.settings.save();
+        self.fresh_start();
+        let location = self.db.location().to_owned();
+        self.announce(match copied {
+            Some(count) => t!("server-in-use-copied", count = count, server = location),
+            None => t!("server-in-use", server = location),
+        });
+    }
+
+    /// If `to` has no entries and the database in use has some, asks
+    /// whether to copy them across, and does. Returns how many entries
+    /// were copied, if any were.
+    fn offer_copy(&self, to: &mut Db) -> anyhow::Result<Option<usize>> {
+        if !to.has_no_entries()? || self.db.has_no_entries()? {
+            return Ok(None);
+        }
+        let categories = self.db.categories()?;
+        let entries = self.db.all_entries()?;
+        let question = format!(
+            "{}\n\n{}",
+            t!("server-copy-question", server = to.location(), count = entries.len(), categories = categories.len()),
+            t!("server-copy-replaces")
+        );
+        if !self.confirm(&t!("server-copy-title"), &question) {
+            return Ok(None);
+        }
+        to.replace_all(&categories, &entries)?;
+        Ok(Some(entries.len()))
+    }
+
+    /// Goes back to the built-in database. Nothing is copied from the
+    /// server; a JSON backup can move the budget.
+    pub(super) fn use_built_in(&mut self) {
+        match Db::open(&self.db_path) {
+            Ok(db) => {
+                self.db = db;
+                self.settings.use_server = false;
+                self.settings.save();
+                self.fresh_start();
+                self.announce(t!("built-in-in-use", path = self.db_path.display().to_string()));
+            }
+            Err(e) => self.show_error(t!(
+                "error-open-database",
+                path = self.db_path.display().to_string(),
+                error = format!("{e:#}")
+            )),
+        }
+    }
+
+    /// Where the budget is kept: the built-in database, or a server whose
+    /// details are typed here.
+    fn database_settings(&mut self, ui: &mut Ui) {
+        heading(ui, &t!("settings-database-heading"));
+        let choices = [t!("settings-database-built-in"), t!("settings-database-server")];
+        dropdown(ui, "database", &t!("settings-database-label"), &choices, &mut self.database_choice, true);
+        note(ui, &t!("settings-database-in-use", location = self.db.location()));
+        if self.database_choice == 0 {
+            if self.db.is_on_server() && full_button(ui, &t!("settings-use-built-in"), true).clicked() {
+                self.use_built_in();
+            }
+            return;
+        }
+        let form = &mut self.server_form;
+        let host_hint = t!("hint-such-as", example = "db.example.com");
+        let host = text_field(ui, Id::new(SERVER_HOST_ID), &t!("settings-server-host"), &mut form.host, &host_hint);
+        let port = text_field(ui, Id::new(SERVER_PORT_ID), &t!("settings-server-port"), &mut self.server_port_input, "3306");
+        let database_hint = t!("hint-such-as", example = "budget");
+        let database = text_field(ui, Id::new("server_database"), &t!("settings-server-database"), &mut form.database, &database_hint);
+        let user = text_field(ui, Id::new("server_user"), &t!("settings-server-user"), &mut form.user, "");
+        let password = password_field(ui, Id::new("server_password"), &t!("settings-server-password"), &mut form.password);
+        let entered =
+            [host, port, database, user, password].iter().any(|r| r.lost_focus()) && ui.input(|i| i.key_pressed(Key::Enter));
+        ui.checkbox(&mut form.tls, t!("settings-server-tls"));
+        note(ui, &t!("settings-server-note"));
+        if full_button(ui, &t!("settings-server-connect"), true).clicked() || entered {
+            self.use_server();
+        }
+    }
+
     pub(super) fn settings_tab(&mut self, ui: &mut Ui) {
         heading(ui, &t!("settings-language-heading"));
         let detected = crate::i18n::system();
@@ -253,6 +374,8 @@ impl BudgetApp {
             self.currency_input = usual.to_owned();
             self.announce(t!("settings-amounts-shown", amount = self.money(123_456)));
         }
+
+        self.database_settings(ui);
 
         heading(ui, &t!("settings-keyboard-heading"));
         if ui.checkbox(&mut self.settings.shortcuts, t!("settings-shortcuts-checkbox")).changed() {

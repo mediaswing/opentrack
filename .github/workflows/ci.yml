@@ -70,6 +70,23 @@ jobs:
   linux:
     name: Linux (x86_64)
     runs-on: ubuntu-22.04
+    # A MariaDB server, so the tests also run against a database server
+    # (see OPENTRACK_TEST_MYSQL in src/db/mod.rs). The other jobs test only
+    # the built-in database.
+    services:
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: opentrack-ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      OPENTRACK_TEST_MYSQL: mysql://root:opentrack-ci@127.0.0.1:3306
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install the libraries for building a windowed app

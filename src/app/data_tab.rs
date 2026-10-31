@@ -148,9 +148,7 @@ impl BudgetApp {
         log::info!("importing JSON, replacing: {replace}");
         match transfer::import_json(&mut self.db, &path, replace) {
             Ok((categories, n)) => {
-                self.spending.clear_form(&self.region);
-                self.category_form = CategoryForm::default();
-                self.reload();
+                self.fresh_start();
                 let file = file_name(&path);
                 self.announce(if replace {
                     t!("data-replaced", categories = categories, count = n, file = file)
@@ -199,8 +197,10 @@ impl BudgetApp {
         }
 
         heading(ui, &t!("data-database-heading"));
-        read_only_field(ui, &t!("data-database-location"), &self.db_path.display().to_string());
-        if full_button(ui, &t!("data-copy-button"), true).clicked() {
+        read_only_field(ui, &t!("data-database-location"), self.db.location());
+        if self.db.is_on_server() {
+            note(ui, &t!("data-server-note"));
+        } else if full_button(ui, &t!("data-copy-button"), true).clicked() {
             self.back_up_database();
         }
     }

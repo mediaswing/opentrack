@@ -22,7 +22,8 @@ The program file is called `opentrack`.
   each month in the dates chosen.
 - **Imports and exports** spending as CSV, everything (budgets included) as a
   JSON backup, and everything as a MariaDB SQL script (from Ctrl+E).
-- **Keeps its own SQLite database**, so there is no server to install.
+- **Keeps its own SQLite database**, so there is no server to install, or
+  keeps the budget on a **MySQL or MariaDB server** instead, if you have one.
 - **Writes a debug log** when you turn it on, to help fix problems.
 
 ## Installing on Windows
@@ -205,7 +206,9 @@ you choose whether it replaces everything or is added to what is there.
 choose the SQL file type.
 
 **Save a copy of the database** on the Import/Export tab writes a complete
-SQLite copy, which can be opened with any SQLite tool.
+SQLite copy, which can be opened with any SQLite tool. When the budget is on
+a database server, back it up with the server's own tools instead, or export
+a JSON backup.
 
 ## Where things are kept
 
@@ -229,6 +232,31 @@ and `spending` (`line`, `name`, `date`, `price`, `bucket`), with category ids
 starting at 22 and the same eight starting categories. For SQLite, `price`
 is stored as whole pence (or cents) so that totals are exact, and dates are
 ISO 8601 text. A `budget` table adds the monthly budget for each category.
+
+### Using a MySQL or MariaDB server
+
+The budget can be kept on a MySQL or MariaDB server instead of in the
+built-in database. Under **Database** on the Settings tab, choose **On a
+MySQL or MariaDB server**, type the server, port, database, user name and
+password, and choose **Connect and use this server**. The database must
+already exist, and the user needs to be able to create tables in it the
+first time.
+
+- The app makes the tables if they aren't there, in the original schema
+  (`price` as `DECIMAL(8,2)`, `date` as `DATE`). These are the same tables
+  the SQL export writes, so a database loaded from an export can be used
+  straight away. The tables must use InnoDB.
+- If the server's database has no entries, you're offered a copy of the
+  budget you're using now. The built-in database is never changed, and
+  **Use the built-in database** goes back to it.
+- **Encrypt the connection (TLS)** is on at first, and checks the server's
+  certificate. Many servers on a home computer or network, including recent
+  MariaDB versions that make their own certificate, need it turned off.
+- The password is kept in `settings.json` (see above), which only your
+  account can read.
+- If the server can't be reached when the app starts, it offers to use the
+  built-in database for that session. `--database FILE` always uses that
+  file.
 
 ## Command line
 
@@ -261,7 +289,13 @@ sudo apt install pkg-config libxkbcommon-dev libwayland-dev libgl1-mesa-dev   li
 ```
 
 Run the tests with `cargo test`. They include tests that drive the whole
-window from the keyboard, without a screen.
+window from the keyboard, without a screen. To run the database tests
+against a MySQL or MariaDB server too, give a user that can create and drop
+databases:
+
+```
+OPENTRACK_TEST_MYSQL=mysql://user:password@127.0.0.1:3306 cargo test
+```
 
 ## Releasing
 

@@ -431,6 +431,52 @@ log-dir-not-absolute = Geben Sie den vollständigen Pfad eines Ordners für das 
 log-dir-saved = Der Protokollordner wurde gespeichert. Setzen Sie ein Häkchen bei Debug-Protokoll schreiben, um es zu starten.
 error-open-folder = { $dir } konnte nicht geöffnet werden: { $error }
 
+## Datenbank, in den Einstellungen, und ein MySQL- oder MariaDB-Server
+
+settings-database-heading = Datenbank
+settings-database-label = Wo das Budget gespeichert wird
+settings-database-built-in = In der App, auf diesem Computer
+settings-database-server = Auf einem MySQL- oder MariaDB-Server
+settings-database-in-use = Jetzt verwendet: { $location }
+settings-use-built-in = Eingebaute Datenbank verwenden
+settings-server-host = Server
+settings-server-port = Port
+settings-server-database = Datenbank
+settings-server-user = Benutzername
+settings-server-password = Passwort
+settings-server-tls = Verbindung verschlüsseln (TLS)
+settings-server-note = Die App legt ihre Tabellen in der Datenbank an, falls sie noch fehlen. Das Passwort wird in der Einstellungsdatei auf diesem Computer gespeichert. Schalten Sie die Verschlüsselung nur für einen Server auf diesem Computer oder in einem vertrauenswürdigen Netzwerk aus.
+settings-server-connect = Verbinden und diesen Server verwenden
+settings-server-port-invalid = „{ $text }“ ist keine Portnummer. Geben Sie eine Zahl von 1 bis 65535 ein, zum Beispiel 3306.
+server-describe = { $database } auf { $host }:{ $port }
+server-host-missing = Geben Sie den Namen oder die Adresse des Servers ein.
+server-database-missing = Geben Sie den Namen der Datenbank auf dem Server ein.
+error-connect-server = Keine Verbindung zu { $server } möglich
+server-tls-hint = Das Zertifikat des Servers ist keines, dem dieser Computer vertraut, wie bei einem Server, der es selbst erstellt hat, üblich. Wenn der Server auf diesem Computer oder in einem vertrauenswürdigen Netzwerk ist, schalten Sie „Verbindung verschlüsseln“ aus und verbinden Sie sich erneut.
+error-server-tables = Die Tabellen in { $server } konnten nicht eingerichtet werden
+server-not-innodb = Diese Tabellen verwenden nicht InnoDB, daher können Änderungen nicht in einem Schritt erfolgen: { $tables }. Wandeln Sie sie mit ALTER TABLE … ENGINE = InnoDB um.
+server-no-copy = Das Budget liegt auf einem Datenbankserver und kann daher nicht hier in eine Datei kopiert werden. Verwenden Sie die Sicherungswerkzeuge des Servers oder exportieren Sie eine JSON-Sicherung.
+server-copy-title = Budget auf den Server kopieren?
+server-copy-question = { $server } enthält noch keine Einträge. { $count ->
+    [one] Den 1 Eintrag
+   *[other] Die { $count } Einträge
+} und { $categories ->
+    [one] 1 Kategorie
+   *[other] { $categories } Kategorien
+} aus der jetzt verwendeten Datenbank dorthin kopieren?
+server-copy-replaces = Was dort bereits ist, etwa die Startkategorien, wird ersetzt. Die jetzt verwendete Datenbank bleibt unverändert.
+error-copy-to-server = Das Budget konnte nicht nach { $server } kopiert werden: { $error }
+server-in-use = { $server } wird jetzt verwendet.
+server-in-use-copied = { $count ->
+    [one] 1 Eintrag wurde
+   *[other] { $count } Einträge wurden
+} nach { $server } kopiert, und die Datenbank wird jetzt verwendet.
+built-in-in-use = Die eingebaute Datenbank unter { $path } wird jetzt verwendet.
+startup-server-failed = Keine Verbindung zum Datenbankserver möglich. { $error }
+startup-server-fallback = Diesmal die eingebaute Datenbank verwenden? Die Einstellungen bleiben unverändert, daher wird der Server beim nächsten Start erneut versucht.
+status-built-in-fallback = Der Datenbankserver war nicht erreichbar, daher wird vorerst die eingebaute Datenbank verwendet.
+data-server-note = Das Budget liegt auf einem MySQL- oder MariaDB-Server. Sichern Sie es mit den Werkzeugen des Servers oder exportieren Sie oben eine JSON-Sicherung.
+
 ## Die Kategorien, mit denen ein neues Budget beginnt, je höchstens 32 Zeichen
 
 start-entertainment = Unterhaltung
@@ -461,6 +507,7 @@ entry-gone = Eintrag { $line } existiert nicht mehr.
 entry-name-missing = Geben Sie ein, wofür das Geld ausgegeben wurde.
 entry-name-too-long = Namen können höchstens { $max } Zeichen lang sein.
 entry-amount-too-large = Beträge können höchstens 999.999,99 sein.
+entry-year-range = Daten müssen in den Jahren { $first } bis { $last } liegen.
 context-category = Kategorie { $id } ({ $name })
 context-budget = Budget für Kategorie { $name }
 context-entry = Eintrag { $line }

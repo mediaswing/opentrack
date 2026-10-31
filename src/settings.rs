@@ -30,6 +30,53 @@ pub struct Settings {
     pub confirm_delete: bool,
     /// Ask GitHub for a newer release when the app starts.
     pub check_updates: bool,
+    /// Keep the budget on `server` rather than in the built-in database.
+    pub use_server: bool,
+    /// A MySQL or MariaDB server, kept even while the built-in database is
+    /// used, so its details needn't be typed again.
+    pub server: Server,
+}
+
+/// How to reach a MySQL or MariaDB server.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Server {
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub user: String,
+    /// Kept in the settings file, which only the user can read.
+    pub password: String,
+    /// Encrypt the connection, checking the server's certificate.
+    pub tls: bool,
+}
+
+impl Default for Server {
+    fn default() -> Self {
+        Self { host: String::new(), port: 3306, database: String::new(), user: String::new(), password: String::new(), tls: true }
+    }
+}
+
+impl Server {
+    /// Where the budget is, as shown, such as "budget on db.example.com:3306".
+    /// Never the password.
+    pub fn describe(&self) -> String {
+        t!("server-describe", database = &self.database, host = self.host.trim(), port = self.port.to_string())
+    }
+}
+
+/// Leaves the password out, so it can't reach the log by accident.
+impl std::fmt::Debug for Server {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Server")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("database", &self.database)
+            .field("user", &self.user)
+            .field("password", &if self.password.is_empty() { "" } else { "(hidden)" })
+            .field("tls", &self.tls)
+            .finish()
+    }
 }
 
 impl Default for Settings {
@@ -41,6 +88,8 @@ impl Default for Settings {
             year_start: None,
             debug_log: false, log_dir: None, shortcuts: true, confirm_delete: true,
             check_updates: true,
+            use_server: false,
+            server: Server::default(),
         }
     }
 }

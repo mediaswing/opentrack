@@ -96,6 +96,12 @@ pub struct BudgetApp {
     /// saved. It is saved when its box loses focus, not on every key.
     currency_unsaved: bool,
     log_dir_input: String,
+    /// The Settings tab's choice of database: 0 for the built-in one, 1
+    /// for a server. It only changes the database when the user connects.
+    database_choice: usize,
+    /// The server's details as typed on the Settings tab.
+    server_form: crate::settings::Server,
+    server_port_input: String,
     status: String,
     /// A tab button to give focus to.
     focus_tab: Option<Tab>,
@@ -124,6 +130,7 @@ impl BudgetApp {
     ) -> Self {
         setup_style(ctx);
         let keymap = Keymap::new(settings.shortcuts, Platform::CURRENT);
+        let database_choice = usize::from(db.is_on_server());
         let mut app = Self {
             db,
             db_path,
@@ -131,6 +138,9 @@ impl BudgetApp {
             currency_input: String::new(),
             currency_unsaved: false,
             log_dir_input: settings.log_dir().display().to_string(),
+            database_choice,
+            server_form: settings.server.clone(),
+            server_port_input: settings.server.port.to_string(),
             settings,
             tab: Tab::Spending,
             categories: Vec::new(),
@@ -181,6 +191,16 @@ impl BudgetApp {
         self.reload_entries();
         self.reload_summary();
         self.category_form.sync(&self.categories, &self.region);
+    }
+
+    /// After the whole budget has changed underneath the window, such as
+    /// from a backup or another database: nothing being changed, chosen or
+    /// typed still refers to what was there before.
+    fn fresh_start(&mut self) {
+        self.spending.clear_form(&self.region);
+        self.spending.selected = None;
+        self.category_form = CategoryForm::default();
+        self.reload();
     }
 
     fn money(&self, pence: i64) -> String {
@@ -569,6 +589,41 @@ mod tests {
         assert_eq!(h.app.summary.budget, 500);
         h.press(Key::F5, Modifiers::NONE);
         assert_eq!(h.app.period, Period::Month(Month::current()), "F5 goes back to this month");
+    }
+
+    /// Switching to a server on the Settings tab, using it, and back. The
+    /// built-in database has no entries, so no copy is offered (which
+    /// would ask in a dialog).
+    #[test]
+    fn the_budget_can_move_to_a_server_and_back() {
+        let Some(test) = crate::db::tests::TestDatabase::new() else { return };
+        let mut h = Harness::new();
+        let dir = tempfile::tempdir().unwrap();
+        h.app.db_path = dir.path().join("budget.db");
+        h.app.switch_tab(Tab::Settings);
+        h.app.database_choice = 1;
+        h.frame(vec![]);
+
+        h.app.server_form = crate::settings::Server { port: 0, ..test.0.clone() };
+        h.app.server_port_input = test.0.port.to_string();
+        h.app.use_server();
+        assert!(h.app.db.is_on_server());
+        assert!(h.app.settings.use_server && h.app.settings.server == test.0, "remembered for next time");
+        assert!(h.app.status.starts_with(&format!("Now using {} on ", test.0.database)), "{}", h.app.status);
+        assert!(h.app.db.location().contains(&test.0.database));
+
+        h.press(Key::N, Modifiers::COMMAND);
+        h.type_text("Lunch");
+        h.press(Key::Tab, Modifiers::NONE);
+        h.press(Key::Tab, Modifiers::NONE);
+        h.type_text("8.50");
+        h.press(Key::S, Modifiers::COMMAND);
+        let on_server = crate::db::Db::connect(&test.0).unwrap().all_entries().unwrap();
+        assert_eq!(on_server.iter().map(|e| (e.name.as_str(), e.price)).collect::<Vec<_>>(), [("Lunch", 850)]);
+
+        h.app.use_built_in();
+        assert!(!h.app.db.is_on_server() && !h.app.settings.use_server);
+        assert!(h.app.db.all_entries().unwrap().is_empty(), "the server's entries stay on the server");
     }
 
     #[test]
