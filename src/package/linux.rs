@@ -89,9 +89,14 @@ fn put(path: &Path, contents: &[u8], mode: u32) -> anyhow::Result<()> {
     let dir = path.parent().expect("package files are in a folder");
     let mut missing = Vec::new();
     let mut d = dir;
-    while !d.exists() {
+    // A relative path ends in an empty path, which never "exists", so stop
+    // there rather than running out of parents.
+    while !d.as_os_str().is_empty() && !d.exists() {
         missing.push(d.to_path_buf());
-        d = d.parent().expect("the package root's parent exists or is created");
+        d = match d.parent() {
+            Some(p) => p,
+            None => break,
+        };
     }
     std::fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
     for d in missing {
