@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-31
+
 ### Added
 
 - The budget can be kept on a MySQL or MariaDB server instead of the
