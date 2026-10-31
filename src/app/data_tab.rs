@@ -83,6 +83,10 @@ impl BudgetApp {
     }
 
     fn export(&mut self, format: Format, path: &Path) {
+        // Writing over the open database would lose it at the next start.
+        if is_live_database(path, &self.db_path) {
+            return self.show_error(t!("data-live-database-export"));
+        }
         log::info!("exporting as {format:?}");
         let file = file_name(path);
         let result = match format {

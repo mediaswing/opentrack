@@ -139,12 +139,23 @@ impl BudgetApp {
         }
         match self.db.delete_category(id, move_to) {
             Ok(()) => {
-                self.category_form.selected = None;
-                self.reload();
+                self.category_deleted(id, move_to);
                 self.announce(t!("categories-deleted", name = &name));
             }
             Err(e) => self.show_error(t!("error-delete-category", name = &name, error = format!("{e:#}"))),
         }
+    }
+
+    /// Catches up after category `id` is deleted. An entry form that was
+    /// using it follows its entries to `move_to`, rather than falling back
+    /// to the first category, which saving an edit would then move the
+    /// entry into.
+    pub(super) fn category_deleted(&mut self, id: i64, move_to: Option<i64>) {
+        if self.spending.category == Some(id) {
+            self.spending.category = move_to;
+        }
+        self.category_form.selected = None;
+        self.reload();
     }
 
     pub(super) fn categories_tab(&mut self, ui: &mut Ui) {

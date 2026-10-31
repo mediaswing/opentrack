@@ -572,6 +572,25 @@ mod tests {
     }
 
     #[test]
+    fn an_entry_being_changed_follows_its_deleted_category() {
+        let mut h = Harness::new();
+        let (transport, entertainment) = (26, 22);
+        let entry = crate::db::Entry { line: 0, name: "Bus".into(), date: money::today(), price: 250, bucket: transport };
+        let line = h.app.db.add_entry(&entry).unwrap();
+        h.app.reload();
+        h.app.spending.selected = Some(line);
+        h.app.edit_selected();
+        assert!(h.app.spending.is_editing());
+
+        // Deleted on the Categories tab, moving its entries, mid-edit.
+        h.app.db.delete_category(transport, Some(entertainment)).unwrap();
+        h.app.category_deleted(transport, Some(entertainment));
+        assert_eq!(h.app.spending.category, Some(entertainment), "not the first category, Accommodation");
+        h.app.save_entry();
+        assert_eq!(h.app.db.all_entries().unwrap()[0].bucket, entertainment);
+    }
+
+    #[test]
     fn tabs_months_and_categories_from_the_keyboard() {
         let mut h = Harness::new();
         h.press(Key::Num2, Modifiers::COMMAND);

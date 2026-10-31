@@ -24,7 +24,7 @@ pub(super) struct SpendingTab {
     pub(super) date: String,
     price: String,
     /// The chosen category's id.
-    category: Option<i64>,
+    pub(super) category: Option<i64>,
     /// List every month, not only the month shown.
     all_months: bool,
     search: String,

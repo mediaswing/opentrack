@@ -112,6 +112,9 @@ impl Db {
 
     fn setup(mut conn: Connection) -> Result<Self> {
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
+        // With the app open twice on one database, a write waits for the
+        // other copy's to finish rather than failing at once.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version > SCHEMA_VERSION {
             bail!(t!("db-newer", version = version));

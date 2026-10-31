@@ -380,6 +380,7 @@ data-added = Added { $count ->
 error-import-json = Could not import { $file }. Nothing was changed. { $error }
 data-no-copy = No copy was made.
 data-live-database = That is the database Open Budget Tracker is using, so it can't be replaced with a copy. Choose another name or folder.
+data-live-database-export = That is the database Open Budget Tracker is using, so it can't be replaced with an export. Choose another name or folder.
 data-copied = Saved a copy of the database as { $file }.
 error-copy-database = Could not copy the database: { $error }
 data-export-heading = Export
