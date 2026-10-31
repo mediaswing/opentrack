@@ -245,7 +245,7 @@ jobs:
 
           $kept | ForEach-Object { Remove-Item $_ }
           Write-Host 'Installed, upgraded, started and uninstalled; settings and data were kept.'
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-x86_64
           path: dist/*.msi
@@ -276,7 +276,7 @@ jobs:
           codesign --verify --strict --verbose=2 "$app"
           echo "Installed app says: $("$app/Contents/MacOS/opentrack" --version)"
           pkgutil --pkg-info io.github.mediaswing.opentrack
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos
           path: dist/*.pkg
@@ -354,7 +354,7 @@ jobs:
 
           rm "${kept[@]}"
           echo 'Installed, upgraded, started and removed; settings and data were kept.'
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-x86_64
           path: dist/*.deb
