@@ -421,6 +421,8 @@ settings-log-dir-hint = Ein Ordner
 settings-use-folder = Diesen Ordner verwenden
 settings-choose-folder = Ordner wählen…
 settings-open-folder = Protokollordner öffnen
+settings-unreadable = Ihre Einstellungen konnten nicht gelesen werden, daher gelten die üblichen.
+settings-unreadable-kept = Ihre Einstellungen konnten nicht gelesen werden, daher gelten die üblichen. Die alte Einstellungsdatei wurde als { $file } aufbewahrt.
 settings-about-heading = Über
 settings-about = Open Budget Tracker { $version }. Die Programmdatei heißt opentrack.
 log-writing = Das Debug-Protokoll wird nach { $path } geschrieben.
@@ -453,6 +455,8 @@ server-host-missing = Geben Sie den Namen oder die Adresse des Servers ein.
 server-database-missing = Geben Sie den Namen der Datenbank auf dem Server ein.
 error-connect-server = Keine Verbindung zu { $server } möglich
 server-tls-hint = Das Zertifikat des Servers ist keines, dem dieser Computer vertraut, wie bei einem Server, der es selbst erstellt hat, üblich. Wenn der Server auf diesem Computer oder in einem vertrauenswürdigen Netzwerk ist, schalten Sie „Verbindung verschlüsseln“ aus und verbinden Sie sich erneut.
+error-path-not-text = Der Dateiname { $path } enthält Zeichen, die die Datenbank nicht verwenden kann. Wählen Sie einen anderen Namen.
+error-reconnect-server = Der Datenbankserver hat die Verbindung geschlossen, und die erneute Verbindung ist fehlgeschlagen
 error-server-tables = Die Tabellen in { $server } konnten nicht eingerichtet werden
 server-not-innodb = Diese Tabellen verwenden nicht InnoDB, daher können Änderungen nicht in einem Schritt erfolgen: { $tables }. Wandeln Sie sie mit ALTER TABLE … ENGINE = InnoDB um.
 server-no-copy = Das Budget liegt auf einem Datenbankserver und kann daher nicht hier in eine Datei kopiert werden. Verwenden Sie die Sicherungswerkzeuge des Servers oder exportieren Sie eine JSON-Sicherung.

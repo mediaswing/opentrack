@@ -31,6 +31,13 @@ struct Row {
     budget: Option<i64>,
 }
 
+/// The average a month, from the first month anything was spent: months
+/// before that, such as before the app was used, would pull it down.
+fn monthly_average(months: &[(Month, i64)]) -> i64 {
+    let since_first: Vec<i64> = months.iter().map(|(_, t)| *t).skip_while(|t| *t == 0).collect();
+    since_first.iter().sum::<i64>() / since_first.len().max(1) as i64
+}
+
 impl BudgetApp {
     pub(super) fn reload_summary(&mut self) {
         let period = self.period;
@@ -161,8 +168,7 @@ impl BudgetApp {
         let description = t!("summary-chart-description", months = listed.join(", "));
         let top = t!("summary-highest", amount = self.money(highest));
         month_chart(ui, &bars, highlight.then(|| bars.len().saturating_sub(1)), &top, &description);
-        let average = s.months.iter().map(|(_, t)| *t).sum::<i64>() / (s.months.len().max(1) as i64);
-        note(ui, &t!("summary-average", amount = self.money(average)));
+        note(ui, &t!("summary-average", amount = self.money(monthly_average(&s.months))));
     }
 
     /// The amounts shown beside a bar, and what a screen reader says for it.
@@ -182,5 +188,20 @@ impl BudgetApp {
                 (amounts, spoken)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_average_starts_from_the_first_month_with_spending() {
+        let months = |totals: &[i64]| -> Vec<(Month, i64)> {
+            totals.iter().enumerate().map(|(i, t)| (Month { year: 2026, month: i as u32 + 1 }, *t)).collect()
+        };
+        assert_eq!(monthly_average(&months(&[0, 0, 0, 300, 0, 600])), 300, "a quiet month after starting counts");
+        assert_eq!(monthly_average(&months(&[0, 0])), 0);
+        assert_eq!(monthly_average(&months(&[])), 0);
     }
 }

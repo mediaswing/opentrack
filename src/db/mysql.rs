@@ -18,7 +18,7 @@ use mysql::consts::CapabilityFlags;
 use mysql::prelude::Queryable;
 use mysql::{Conn, OptsBuilder, SslOpts, TxOpts};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The tables, as made on a server and written by the SQL export. The
 /// categories' AUTO_INCREMENT is `FIRST_CATEGORY_ID`.
@@ -64,7 +64,15 @@ const ALL_DAYS: (&str, &str) = ("1000-01-01", "9999-12-31");
 
 pub struct MySql {
     conn: Conn,
+    /// How it was made, to make it again if the server closes it.
+    options: OptsBuilder,
+    last_used: Instant,
 }
+
+/// How long the connection can sit unused before it is checked. Servers
+/// close connections left idle for `wait_timeout`, which hosted servers
+/// often set to minutes.
+const IDLE_BEFORE_CHECK: Duration = if cfg!(test) { Duration::ZERO } else { Duration::from_secs(10) };
 
 fn options(server: &Server, database: Option<&str>) -> OptsBuilder {
     let opts = OptsBuilder::new()
@@ -93,6 +101,21 @@ pub fn admin(server: &Server, sql: &str) -> Result<()> {
     Ok(())
 }
 
+/// Runs a script of several statements in the server's database, as the
+/// `mysql` command-line client would, such as loading the SQL export.
+#[cfg(test)]
+pub fn run_script(server: &Server, sql: &str) -> Result<()> {
+    let mut conn = Conn::new(options(server, Some(&server.database)))?;
+    // Each statement's result is read, so an error in any of them shows.
+    let mut result = conn.query_iter(sql)?;
+    while let Some(set) = result.iter() {
+        for row in set {
+            row?;
+        }
+    }
+    Ok(())
+}
+
 impl MySql {
     pub fn connect(server: &Server) -> Result<Self> {
         if server.host.trim().is_empty() {
@@ -102,7 +125,8 @@ impl MySql {
         if database.is_empty() {
             bail!(t!("server-database-missing"));
         }
-        let conn = Conn::new(options(server, Some(database))).map_err(|e| {
+        let options = options(server, Some(database));
+        let conn = Conn::new(options.clone()).map_err(|e| {
             // Newer MariaDB servers turn TLS on with a certificate they made
             // themselves, which nothing trusts, so say what to do about it.
             let message = format!("{}: {e}", t!("error-connect-server", server = server.describe()));
@@ -112,7 +136,7 @@ impl MySql {
                 anyhow::anyhow!(message)
             }
         })?;
-        let mut db = MySql { conn };
+        let mut db = MySql { conn, options, last_used: Instant::now() };
         db.setup().with_context(|| t!("error-server-tables", server = server.describe()))?;
         Ok(db)
     }
@@ -149,6 +173,21 @@ impl MySql {
             tx.commit()?;
         }
         Ok(())
+    }
+}
+
+impl MySql {
+    /// The connection, checked first if it has been idle, and made again
+    /// if the server has closed it. Only ever called at the start of an
+    /// operation, so a transaction is never split across two connections,
+    /// and nothing is retried, so nothing can happen twice.
+    fn conn(&mut self) -> Result<&mut Conn> {
+        if self.last_used.elapsed() >= IDLE_BEFORE_CHECK && self.conn.ping().is_err() {
+            log::info!("reconnecting to the database server");
+            self.conn = Conn::new(self.options.clone()).context(t!("error-reconnect-server"))?;
+        }
+        self.last_used = Instant::now();
+        Ok(&mut self.conn)
     }
 }
 
@@ -192,11 +231,11 @@ fn entry_params(e: &Entry) -> (String, String, String, i64) {
 
 impl Store for MySql {
     fn categories(&mut self) -> Result<Vec<Category>> {
-        categories(&mut self.conn)
+        categories(self.conn()?)
     }
 
     fn add_category(&mut self, short: &str, budget: Option<i64>) -> Result<i64> {
-        let mut tx = self.conn.start_transaction(TxOpts::default())?;
+        let mut tx = self.conn()?.start_transaction(TxOpts::default())?;
         tx.exec_drop("INSERT INTO category (short) VALUES (?)", (short,))?;
         let id = tx.last_insert_id().context("no id for the new category")? as i64;
         set_budget(&mut tx, id, budget)?;
@@ -205,7 +244,7 @@ impl Store for MySql {
     }
 
     fn update_category(&mut self, id: i64, short: &str, budget: Option<i64>) -> Result<()> {
-        let mut tx = self.conn.start_transaction(TxOpts::default())?;
+        let mut tx = self.conn()?.start_transaction(TxOpts::default())?;
         tx.exec_drop("UPDATE category SET short = ? WHERE id = ?", (short, id))?;
         set_budget(&mut tx, id, budget)?;
         tx.commit()?;
@@ -213,11 +252,11 @@ impl Store for MySql {
     }
 
     fn entry_counts(&mut self) -> Result<Vec<(i64, i64)>> {
-        Ok(self.conn.query("SELECT bucket, COUNT(*) FROM spending GROUP BY bucket")?)
+        Ok(self.conn()?.query("SELECT bucket, COUNT(*) FROM spending GROUP BY bucket")?)
     }
 
     fn delete_category(&mut self, id: i64, move_to: Option<i64>) -> Result<i64> {
-        let mut tx = self.conn.start_transaction(TxOpts::default())?;
+        let mut tx = self.conn()?.start_transaction(TxOpts::default())?;
         let count: i64 = tx.exec_first("SELECT COUNT(*) FROM spending WHERE bucket = ?", (id,))?.unwrap_or(0);
         if count > 0 {
             match move_to {
@@ -233,7 +272,7 @@ impl Store for MySql {
 
     fn entries(&mut self, days: Option<Days>, bucket: Option<i64>) -> Result<Vec<Entry>> {
         let (first, last) = days.map_or((ALL_DAYS.0.to_owned(), ALL_DAYS.1.to_owned()), day_params);
-        let rows = self.conn.exec(
+        let rows = self.conn()?.exec(
             format!(
                 "SELECT {ENTRY_COLUMNS} FROM spending
                  WHERE date BETWEEN ? AND ? AND (? IS NULL OR bucket = ?)
@@ -245,42 +284,44 @@ impl Store for MySql {
     }
 
     fn all_entries(&mut self) -> Result<Vec<Entry>> {
-        let rows = self.conn.query(format!("SELECT {ENTRY_COLUMNS} FROM spending ORDER BY line"))?;
+        let rows = self.conn()?.query(format!("SELECT {ENTRY_COLUMNS} FROM spending ORDER BY line"))?;
         entries_from_rows(rows)
     }
 
     fn add_entry(&mut self, e: &Entry) -> Result<i64> {
-        self.conn.exec_drop("INSERT INTO spending (name, date, price, bucket) VALUES (?, ?, ?, ?)", entry_params(e))?;
-        Ok(self.conn.last_insert_id() as i64)
+        let conn = self.conn()?;
+        conn.exec_drop("INSERT INTO spending (name, date, price, bucket) VALUES (?, ?, ?, ?)", entry_params(e))?;
+        Ok(conn.last_insert_id() as i64)
     }
 
     fn update_entry(&mut self, e: &Entry) -> Result<bool> {
         let (name, date, price, bucket) = entry_params(e);
-        self.conn.exec_drop(
+        let conn = self.conn()?;
+        conn.exec_drop(
             "UPDATE spending SET name = ?, date = ?, price = ?, bucket = ? WHERE line = ?",
             (name, date, price, bucket, e.line),
         )?;
-        Ok(self.conn.affected_rows() > 0)
+        Ok(conn.affected_rows() > 0)
     }
 
     fn delete_entry(&mut self, line: i64) -> Result<()> {
-        self.conn.exec_drop("DELETE FROM spending WHERE line = ?", (line,))?;
+        self.conn()?.exec_drop("DELETE FROM spending WHERE line = ?", (line,))?;
         Ok(())
     }
 
     fn entry_count_between(&mut self, days: Days) -> Result<i64> {
-        Ok(self.conn.exec_first("SELECT COUNT(*) FROM spending WHERE date BETWEEN ? AND ?", day_params(days))?.unwrap_or(0))
+        Ok(self.conn()?.exec_first("SELECT COUNT(*) FROM spending WHERE date BETWEEN ? AND ?", day_params(days))?.unwrap_or(0))
     }
 
     fn totals(&mut self, days: Days) -> Result<Vec<(i64, i64)>> {
-        Ok(self.conn.exec(
+        Ok(self.conn()?.exec(
             "SELECT bucket, CAST(SUM(price) * 100 AS SIGNED) FROM spending WHERE date BETWEEN ? AND ? GROUP BY bucket",
             day_params(days),
         )?)
     }
 
     fn month_totals(&mut self, days: Days) -> Result<Vec<(String, i64)>> {
-        Ok(self.conn.exec(
+        Ok(self.conn()?.exec(
             "SELECT DATE_FORMAT(date, '%Y-%m') AS month, CAST(SUM(price) * 100 AS SIGNED) FROM spending
              WHERE date BETWEEN ? AND ? GROUP BY month",
             day_params(days),
@@ -288,7 +329,7 @@ impl Store for MySql {
     }
 
     fn replace_all(&mut self, categories: &[Category], entries: &[Entry]) -> Result<()> {
-        let mut tx = self.conn.start_transaction(TxOpts::default())?;
+        let mut tx = self.conn()?.start_transaction(TxOpts::default())?;
         // DELETE rather than TRUNCATE, which would commit at once.
         for table in ["spending", "budget", "category"] {
             tx.query_drop(format!("DELETE FROM {table}"))?;
@@ -314,7 +355,7 @@ impl Store for MySql {
     }
 
     fn add_entries_by_category_name(&mut self, entries: &[(Entry, String)]) -> Result<usize> {
-        let mut tx = self.conn.start_transaction(TxOpts::default())?;
+        let mut tx = self.conn()?.start_transaction(TxOpts::default())?;
         let mut known = categories(&mut tx)?;
         let mut created = 0;
         for (i, (e, short)) in entries.iter().enumerate() {
@@ -338,5 +379,24 @@ impl Store for MySql {
 
     fn back_up(&mut self, _path: &Path) -> Result<()> {
         bail!(t!("server-no-copy"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// As when the server closes an idle connection: the next operation
+    /// connects again rather than failing.
+    #[test]
+    fn a_closed_connection_is_made_again() {
+        let Some(test) = crate::db::tests::TestDatabase::new() else { return };
+        let mut db = MySql::connect(&test.0).unwrap();
+        let first = db.conn.connection_id();
+        admin(&test.0, &format!("KILL {first}")).unwrap();
+        assert_eq!(db.categories().unwrap().len(), 8, "works after the server closed the connection");
+        assert_ne!(db.conn.connection_id(), first, "on a new connection");
+        db.add_entry(&crate::db::Entry { line: 0, name: "Bus".into(), date: "2026-10-02".parse().unwrap(), price: 250, bucket: 26 })
+            .unwrap();
     }
 }

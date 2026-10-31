@@ -279,7 +279,10 @@ impl Store for Sqlite {
     }
 
     fn back_up(&mut self, path: &Path) -> Result<()> {
-        self.conn.execute("VACUUM INTO ?1", [path.to_string_lossy()])?;
+        // SQLite takes the name as text, so a path that isn't would be
+        // changed, and the copy written somewhere else.
+        let name = path.to_str().with_context(|| t!("error-path-not-text", path = path.display().to_string()))?;
+        self.conn.execute("VACUUM INTO ?1", [name])?;
         Ok(())
     }
 }

@@ -1,0 +1,9 @@
+# The workflows' actions are pinned to commit hashes, so a tag moved to
+# other code can't change what runs. Dependabot proposes updates to the
+# hashes (with the version in a comment) as new versions come out.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

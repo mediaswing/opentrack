@@ -16,6 +16,14 @@ fn row_id(line: i64) -> Id {
     Id::new(("entry", line))
 }
 
+/// An entry's text in the list.
+struct RowStrings {
+    date: String,
+    price: String,
+    category: String,
+    spoken: String,
+}
+
 #[derive(Default)]
 pub(super) struct SpendingTab {
     /// The line number of the entry being changed, or `None` for a new one.
@@ -31,6 +39,9 @@ pub(super) struct SpendingTab {
     /// Only list this category.
     filter: Option<i64>,
     entries: Vec<Entry>,
+    /// Each entry's text as shown and said, made with `entries` rather
+    /// than every frame.
+    rows: Vec<RowStrings>,
     total: i64,
     /// The entry chosen in the list.
     pub(super) selected: Option<i64>,
@@ -62,6 +73,12 @@ impl SpendingTab {
     pub(super) fn has_typing(&self) -> bool {
         !self.name.trim().is_empty() || !self.price.trim().is_empty()
     }
+
+    /// The amounts as the list shows them.
+    #[cfg(test)]
+    pub(super) fn shown_prices(&self) -> Vec<&str> {
+        self.rows.iter().map(|r| r.price.as_str()).collect()
+    }
 }
 
 impl BudgetApp {
@@ -81,12 +98,32 @@ impl BudgetApp {
             }
             Err(e) => self.show_error(t!("error-read-entries", error = format!("{e:#}"))),
         }
+        self.write_rows();
         if self.spending.category.is_none_or(|id| !self.categories.iter().any(|c| c.id == id)) {
             self.spending.category = self.categories.first().map(|c| c.id);
         }
         if self.spending.filter.is_some_and(|id| !self.categories.iter().any(|c| c.id == id)) {
             self.spending.filter = None;
         }
+    }
+
+    /// Makes the text of each entry in the list. Called whenever the
+    /// entries, categories, region, language or currency symbol change.
+    pub(super) fn write_rows(&mut self) {
+        let rows = self
+            .spending
+            .entries
+            .iter()
+            .map(|entry| {
+                let date = self.region.long_date(entry.date);
+                let price = self.money(entry.price);
+                let category = self.category_name(entry.bucket);
+                let spoken =
+                    t!("spending-row-spoken", name = &entry.name, amount = &price, category = &category, date = &date);
+                RowStrings { date, price, category, spoken }
+            })
+            .collect();
+        self.spending.rows = rows;
     }
 
     /// Starts a new entry (Ctrl+N).
@@ -398,12 +435,14 @@ impl BudgetApp {
 
         let mut pressed = None;
         let mut focused_index = None;
-        for (i, entry) in self.spending.entries.iter().enumerate() {
-            let date = self.region.long_date(entry.date);
-            let price = self.money(entry.price);
-            let category = self.category_name(entry.bucket);
-            let spoken = t!("spending-row-spoken", name = &entry.name, amount = &price, category = &category, date = &date);
-            let text = RowText { date: &date, name: &entry.name, category: &category, price: &price, spoken: &spoken };
+        for (i, (entry, row)) in self.spending.entries.iter().zip(&self.spending.rows).enumerate() {
+            let text = RowText {
+                date: &row.date,
+                name: &entry.name,
+                category: &row.category,
+                price: &row.price,
+                spoken: &row.spoken,
+            };
             let selected = self.spending.selected == Some(entry.line);
             let resp = entry_row(ui, row_id(entry.line), &text, selected);
             if self.spending.focus_row == Some(entry.line) {

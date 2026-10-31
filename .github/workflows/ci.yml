@@ -32,11 +32,13 @@ jobs:
     name: Windows (x86_64)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
       # The prefix keeps these caches apart from the release workflow's, so
       # what CI saves can never change how a release is built.
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           prefix-key: v1-rust-ci
       - run: cargo test --locked
@@ -45,9 +47,11 @@ jobs:
     name: macOS (Apple Silicon)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           prefix-key: v1-rust-ci
       - run: cargo test --locked
@@ -88,16 +92,21 @@ jobs:
     env:
       OPENTRACK_TEST_MYSQL: mysql://root:opentrack-ci@127.0.0.1:3306
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the libraries for building a windowed app
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev gcc desktop-file-utils
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           prefix-key: v1-rust-ci
       - run: cargo test --locked
+      # Lints, once: they are the same on every system.
+      - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo build --locked
       # The debug build of the app, packaged as the release job packages its
       # own. The package's fields and contents are checked, but it isn't

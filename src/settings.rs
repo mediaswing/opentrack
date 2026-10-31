@@ -3,7 +3,7 @@
 
 use crate::money::YearStart;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -94,15 +94,54 @@ impl Default for Settings {
     }
 }
 
-impl Settings {
-    pub fn load() -> Self {
-        match std::fs::read_to_string(crate::paths::settings_file()) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
-                log::warn!("could not read the settings, so using the defaults: {e}");
-                Settings::default()
-            }),
-            Err(_) => Settings::default(),
+/// The settings file was there but couldn't be read, so the defaults are
+/// in use. Said once the interface's language is known.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Unreadable {
+    /// A copy of it is here, safe from being saved over.
+    Kept(PathBuf),
+    /// No copy could be made.
+    Lost,
+}
+
+impl Unreadable {
+    /// What to tell the user.
+    pub fn message(&self) -> String {
+        match self {
+            Unreadable::Kept(file) => t!("settings-unreadable-kept", file = file.display().to_string()),
+            Unreadable::Lost => t!("settings-unreadable"),
         }
+    }
+}
+
+impl Settings {
+    pub fn load() -> (Self, Option<Unreadable>) {
+        Self::load_from(&crate::paths::settings_file())
+    }
+
+    /// Reads the settings from `path`. Without a file, the defaults are
+    /// used, as on the first run. A file that can't be read, such as one
+    /// cut short or edited by hand, is copied aside first, as the next
+    /// save would write over it.
+    fn load_from(path: &Path) -> (Self, Option<Unreadable>) {
+        let error = match std::fs::read_to_string(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Settings::default(), None),
+            Ok(text) => match serde_json::from_str(&text) {
+                Ok(settings) => return (settings, None),
+                Err(e) => e.to_string(),
+            },
+            Err(e) => e.to_string(),
+        };
+        log::warn!("could not read the settings, so using the defaults: {error}");
+        let kept = path.with_extension("json.unreadable");
+        let problem = match std::fs::copy(path, &kept) {
+            Ok(_) => Unreadable::Kept(kept),
+            Err(e) => {
+                log::warn!("could not keep a copy of the settings: {e}");
+                Unreadable::Lost
+            }
+        };
+        (Settings::default(), Some(problem))
     }
 
     pub fn save(&self) {
@@ -116,5 +155,28 @@ impl Settings {
 
     pub fn log_dir(&self) -> PathBuf {
         self.log_dir.clone().unwrap_or_else(crate::paths::default_log_dir)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unreadable_file_is_kept_and_the_defaults_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        assert_eq!(Settings::load_from(&path).1, None, "no file is the first run");
+
+        std::fs::write(&path, r#"{"currency": "€", "debug_log": tr"#).unwrap();
+        let (settings, problem) = Settings::load_from(&path);
+        assert_eq!(settings.currency, None, "the defaults");
+        let kept = dir.path().join("settings.json.unreadable");
+        assert_eq!(problem, Some(Unreadable::Kept(kept.clone())));
+        assert_eq!(std::fs::read_to_string(kept).unwrap(), r#"{"currency": "€", "debug_log": tr"#);
+
+        std::fs::write(&path, r#"{"currency": "€"}"#).unwrap();
+        let (settings, problem) = Settings::load_from(&path);
+        assert_eq!((settings.currency.as_deref(), problem), (Some("€"), None));
     }
 }

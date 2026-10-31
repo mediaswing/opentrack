@@ -86,7 +86,7 @@ fn package(dir: Option<&String>) -> ExitCode {
 
 fn run_gui(force_log: bool, database: Option<std::path::PathBuf>) -> ExitCode {
     logging::init();
-    let mut settings = settings::Settings::load();
+    let (mut settings, unreadable) = settings::Settings::load();
     if force_log {
         settings.debug_log = true;
     }
@@ -99,6 +99,10 @@ fn run_gui(force_log: bool, database: Option<std::path::PathBuf>) -> ExitCode {
         }
     }
     log::info!("starting opentrack {}", env!("CARGO_PKG_VERSION"));
+    if let Some(problem) = &unreadable {
+        log::warn!("the settings file could not be read, so the defaults are in use ({problem:?})");
+        start_status = format!("{} {start_status}", problem.message());
+    }
 
     // A file given with --database is always used, rather than a server.
     let use_server = settings.use_server && database.is_none();

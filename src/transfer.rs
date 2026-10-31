@@ -38,7 +38,8 @@ pub fn export_csv(db: &Db, path: &Path) -> Result<usize> {
     out.write_record(CSV_HEADER)?;
     for e in &entries {
         let category = categories.iter().find(|c| c.id == e.bucket).map_or("", |c| c.short.as_str());
-        out.write_record([e.name.as_str(), &e.date.to_string(), &money::plain(e.price), category])?;
+        let (date, price) = (e.date.to_string(), money::plain(e.price));
+        out.write_record([as_text(&e.name).as_ref(), &date, &price, as_text(category).as_ref()])?;
     }
     write(path, &out.into_inner()?)?;
     Ok(entries.len())
@@ -71,17 +72,43 @@ pub fn read_csv(text: &str) -> Result<Vec<(Entry, String)>> {
         let row_error = |e: String| anyhow::anyhow!(t!("csv-row-error", row = row, error = e));
         let parsed_date = money::parse_date(field(date)).map_err(row_error)?;
         let parsed_price = money::parse(field(price), money::Numbers::PLAIN).map_err(row_error)?;
-        let entry = Entry { line: 0, name: field(name).to_owned(), date: parsed_date, price: parsed_price, bucket: 0 };
+        let entry = Entry { line: 0, name: from_text(field(name)).to_owned(), date: parsed_date, price: parsed_price, bucket: 0 };
         if entry.name.is_empty() {
             bail!(t!("csv-name-empty", row = row));
         }
         if entry.name.chars().count() > crate::db::MAX_NAME_CHARS {
             bail!(t!("csv-name-too-long", row = row, max = crate::db::MAX_NAME_CHARS));
         }
-        let category = crate::db::check_category_name(field(category)).map_err(|e| row_error(e.to_string()))?;
+        let category = crate::db::check_category_name(from_text(field(category))).map_err(|e| row_error(e.to_string()))?;
         rows.push((entry, category));
     }
     Ok(rows)
+}
+
+/// Whether a spreadsheet would read `cell` as a formula rather than text:
+/// it starts with = + - @ or a tab or carriage return. Also true after a
+/// quote added by `as_text`, so a name that really starts with '= is
+/// marked too, and comes back unchanged.
+fn reads_as_formula(cell: &str) -> bool {
+    match cell.strip_prefix('\'') {
+        Some(rest) => reads_as_formula(rest),
+        None => cell.starts_with(['=', '+', '-', '@', '\t', '\r']),
+    }
+}
+
+/// A name for a CSV file, with a quote in front if a spreadsheet would
+/// otherwise run it as a formula, such as "=HYPERLINK(...)". Spreadsheets
+/// show the quote as marking text; `from_text` takes it off again.
+fn as_text(cell: &str) -> std::borrow::Cow<'_, str> {
+    if reads_as_formula(cell) { format!("'{cell}").into() } else { cell.into() }
+}
+
+/// A name from a CSV file without the quote `as_text` added.
+fn from_text(cell: &str) -> &str {
+    match cell.strip_prefix('\'') {
+        Some(rest) if reads_as_formula(rest) => rest,
+        _ => cell,
+    }
 }
 
 pub struct CsvImport {
@@ -264,22 +291,34 @@ pub fn export_sql(db: &Db, path: &Path) -> Result<usize> {
     Ok(entries.len())
 }
 
-/// A MariaDB string literal.
+/// A MariaDB string expression for `text` that reads the same in every SQL
+/// mode. Quotes are doubled, which every mode understands, and backslash
+/// escapes are never used: with NO_BACKSLASH_ESCAPES they would be kept as
+/// they are. A backslash, which starts an escape in the usual mode, is
+/// written as CHAR(92), and so are NUL and Ctrl+Z, which can end a file
+/// early, joined to the rest with CONCAT. Line breaks need nothing.
 fn sql_string(text: &str) -> String {
-    let mut out = String::from("'");
+    let mut parts = Vec::new();
+    let mut quoted = String::new();
     for c in text.chars() {
         match c {
-            '\'' => out.push_str("''"),
-            '\\' => out.push_str("\\\\"),
-            '\0' => out.push_str("\\0"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\u{1a}' => out.push_str("\\Z"),
-            c => out.push(c),
+            '\\' | '\0' | '\u{1a}' => {
+                if !quoted.is_empty() {
+                    parts.push(format!("'{}'", std::mem::take(&mut quoted)));
+                }
+                parts.push(format!("CHAR({} USING utf8mb4)", u32::from(c)));
+            }
+            '\'' => quoted.push_str("''"),
+            c => quoted.push(c),
         }
     }
-    out.push('\'');
-    out
+    if !quoted.is_empty() || parts.is_empty() {
+        parts.push(format!("'{quoted}'"));
+    }
+    match parts.as_slice() {
+        [one] => one.clone(),
+        _ => format!("CONCAT({})", parts.join(", ")),
+    }
 }
 
 // ----- files ---------------------------------------------------------------
@@ -329,6 +368,48 @@ mod tests {
         assert_eq!(names(&fresh), names(&db));
     }
 
+    /// Names a spreadsheet would run as formulas are written as text, and
+    /// read back as they were.
+    #[test]
+    fn csv_names_never_run_as_formulas() {
+        let names = ["=HYPERLINK(\"http://x\",\"y\")", "+1", "-refund", "@SUM(A1)", "'=already quoted", "''=two", "'plain", "plain"];
+        for name in names {
+            let written = as_text(name);
+            assert!(!reads_as_formula(&written) || written.starts_with('\''), "{name}");
+            assert!(!["=", "+", "-", "@"].iter().any(|c| written.starts_with(c)), "{name} is written as {written}");
+            assert_eq!(from_text(&written), name, "{name} comes back");
+        }
+        assert_eq!(as_text("plain"), "plain");
+        assert_eq!(as_text("'plain"), "'plain", "a quote before ordinary text is left alone");
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("formulas.csv");
+        let mut db = Db::open_in_memory().unwrap();
+        let rows: Vec<(Entry, String)> = names
+            .iter()
+            .map(|n| (Entry { line: 0, name: (*n).into(), date: "2026-10-02".parse().unwrap(), price: -100, bucket: 0 }, format!("={n}").chars().take(32).collect()))
+            .collect();
+        db.add_entries_by_category_name(&rows).unwrap();
+        export_csv(&db, &path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.lines().skip(1).all(|l| !l.starts_with(['=', '+', '-', '@'])), "{text}");
+        assert!(text.contains(",-1.00,"), "amounts are left as numbers: {text}");
+        let mut fresh = Db::open_in_memory().unwrap();
+        import_csv(&mut fresh, &path).unwrap();
+        let named = |db: &Db| {
+            let categories = db.categories().unwrap();
+            let mut all: Vec<(String, String)> = db
+                .all_entries()
+                .unwrap()
+                .into_iter()
+                .map(|e| (e.name, categories.iter().find(|c| c.id == e.bucket).unwrap().short.clone()))
+                .collect();
+            all.sort();
+            all
+        };
+        assert_eq!(named(&fresh), named(&db));
+    }
+
     #[test]
     fn csv_columns_in_any_order_and_errors_name_the_row() {
         let rows = read_csv("\u{feff}Category,Amount,Name,Date\nTransport,£2.50,Bus,2026-10-01\n,,,\n").unwrap();
@@ -373,7 +454,58 @@ Bus,2026-10-01,2.50,
         assert_eq!(sql.matches("DEFAULT CHARSET = utf8mb4;").count(), 3);
         assert!(sql.contains("'O''Neill''s \"pub\"', '2026-10-03', -3.00, 30)"), "{sql}");
         assert!(sql.contains("(23, 200.00)"));
-        assert_eq!(sql_string("a\\b\nc"), "'a\\\\b\\nc'");
+        assert_eq!(sql_string("plain"), "'plain'");
+        assert_eq!(sql_string(""), "''");
+        assert_eq!(sql_string("it's"), "'it''s'");
+        assert_eq!(sql_string("a\\b\nc"), "CONCAT('a', CHAR(92 USING utf8mb4), 'b\nc')");
+        assert_eq!(sql_string("\\"), "CHAR(92 USING utf8mb4)");
+    }
+
+    /// Names that try to break out of their quotes, or that a server could
+    /// read differently, come back exactly when the export is loaded, and
+    /// nothing in them runs, whatever the server's SQL mode. Loading needs a
+    /// test server (see `db::tests::test_server`); the export is checked
+    /// without one.
+    #[test]
+    fn sql_export_loads_hostile_names_exactly() {
+        const HOSTILE: [&str; 10] = [
+            "x'); DROP TABLE category; --",
+            "\\'); DROP TABLE spending; #",
+            "a\\\\b \\n \\0 \\Z \\' \\\" end\\",
+            "nul \0 byte and ctrl-z \u{1a} here",
+            "line\nbreak\r\nand tab\tthere",
+            "quotes ' '' \" ` and `` done",
+            "look-alikes ʼ ＇ ′ ‘ ’ “ ” 😀",
+            "*/ /* comment -- # ; %_",
+            "'",
+            "\\",
+        ];
+        let mut db = Db::open_in_memory().unwrap();
+        let rows: Vec<(Entry, String)> = HOSTILE
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let date = "2026-10-02".parse().unwrap();
+                let category: String = format!("{i}{name}").chars().take(32).collect();
+                (Entry { line: 0, name: (*name).into(), date, price: -(i as i64) * 101, bucket: 0 }, category)
+            })
+            .collect();
+        db.add_entries_by_category_name(&rows).unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hostile.sql");
+        export_sql(&db, &path).unwrap();
+        let script = std::fs::read_to_string(&path).unwrap();
+        assert!(!script.contains('\0') && !script.contains('\u{1a}'), "bytes that end a file early are written as CHAR()");
+
+        for mode in ["", "NO_BACKSLASH_ESCAPES", "ANSI_QUOTES,NO_BACKSLASH_ESCAPES"] {
+            let Some(test) = crate::db::tests::TestDatabase::new() else { return };
+            crate::db::run_script(&test.0, &format!("SET SESSION sql_mode = '{mode}';\n{script}"))
+                .unwrap_or_else(|e| panic!("{mode:?}: {e:#}"));
+            let loaded = Db::connect(&test.0).unwrap();
+            assert_eq!(loaded.categories().unwrap(), db.categories().unwrap(), "sql_mode {mode:?}");
+            assert_eq!(loaded.all_entries().unwrap(), db.all_entries().unwrap(), "sql_mode {mode:?}");
+        }
     }
 
     #[test]

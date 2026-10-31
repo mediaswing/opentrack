@@ -253,6 +253,20 @@ fn region_from_env(var: impl Fn(&str) -> Option<String>) -> Option<String> {
     ["LC_ALL", "LC_TIME", "LC_MONETARY", "LC_NUMERIC", "LANG"].into_iter().filter_map(var).find(|tag| is_set(tag))
 }
 
+/// The year a two-digit year means: the one ending in those digits from
+/// 79 years before `this_year` to 20 after it. In 2026, "30" is 2030 and
+/// "99" is 1999.
+fn expand_year(two_digits: i32, this_year: i32) -> i32 {
+    let year = this_year - this_year.rem_euclid(100) + two_digits;
+    if year > this_year + 20 {
+        year - 100
+    } else if year < this_year - 79 {
+        year + 100
+    } else {
+        year
+    }
+}
+
 /// The region chosen on the Settings tab, or the system's.
 pub fn resolve(chosen: Option<&str>) -> Region {
     chosen.and_then(find).unwrap_or_else(|| for_tag(&system_tag()))
@@ -330,7 +344,7 @@ impl Region {
         };
         let number = |s: &str| s.parse::<u32>().ok().filter(|_| s.len() <= 2);
         let year = match (year.len(), year.parse::<i32>()) {
-            (2, Ok(y)) => 2000 + y,
+            (2, Ok(y)) => expand_year(y, chrono::Datelike::year(&money::today())),
             (4, Ok(y)) => y,
             _ => return Err(error()),
         };
@@ -494,6 +508,8 @@ mod tests {
         assert!(us.parse_date("30/10/2026").is_err());
         assert!(gb.parse_date("5/3").is_err());
         assert!(gb.parse_date("5/3/202").is_err());
+        assert_eq!([0, 26, 46, 47, 99].map(|y| expand_year(y, 2026)), [2000, 2026, 2046, 1947, 1999]);
+        assert_eq!(expand_year(5, 2090), 2105, "late in a century, the next one's years are near");
     }
 
     #[test]

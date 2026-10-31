@@ -626,6 +626,26 @@ mod tests {
         assert!(h.app.db.all_entries().unwrap().is_empty(), "the server's entries stay on the server");
     }
 
+    /// The list's text is made when the entries are read, not every frame,
+    /// so it must be made again when the currency symbol changes.
+    #[test]
+    fn the_list_follows_the_currency_symbol() {
+        let mut h = Harness::new();
+        let entry = crate::db::Entry { line: 0, name: "Lunch".into(), date: money::today(), price: 850, bucket: 23 };
+        h.app.db.add_entry(&entry).unwrap();
+        h.app.reload();
+        assert_eq!(h.app.spending.shown_prices(), ["£8.50"]);
+
+        h.app.switch_tab(Tab::Settings);
+        h.app.currency_input.clear();
+        h.frame(vec![]);
+        h.ctx.memory_mut(|m| m.request_focus(Id::new("currency")));
+        h.frame(vec![]);
+        h.type_text("$");
+        assert_eq!(h.app.settings.currency.as_deref(), Some("$"));
+        assert_eq!(h.app.spending.shown_prices(), ["$8.50"]);
+    }
+
     #[test]
     fn an_entry_being_changed_follows_its_deleted_category() {
         let mut h = Harness::new();

@@ -79,6 +79,8 @@ pub fn parse(text: &str, numbers: Numbers) -> Result<i64, String> {
         return Err(t!("amount-too-precise"));
     }
     let too_large = || t!("amount-too-large", max = format(MAX_PENCE, "", numbers, SymbolAt::Before));
+    // Leading zeros, as in "007.50", add nothing.
+    let whole = whole.trim_start_matches('0');
     if whole.len() > 6 {
         return Err(too_large());
     }
@@ -336,6 +338,9 @@ mod tests {
         assert_eq!(parse(".5"), Ok(50));
         assert_eq!(parse("8,50"), Ok(850));
         assert_eq!(parse("999999.99"), Ok(MAX_PENCE));
+        assert_eq!(parse("0001234.50"), Ok(123_450), "leading zeros");
+        assert_eq!(parse("00.05"), Ok(5));
+        assert_eq!(parse("-0"), Ok(0));
         assert!(parse("").is_err());
         assert!(parse("1.234").is_err());
         assert!(parse("1000000").is_err());

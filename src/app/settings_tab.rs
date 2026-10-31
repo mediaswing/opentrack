@@ -81,6 +81,7 @@ impl BudgetApp {
         let language = crate::i18n::resolve(tag);
         crate::i18n::set(language);
         log::info!("language {}", language.tag);
+        self.write_rows();
         self.announce(t!("settings-language-changed"));
     }
 
@@ -349,6 +350,7 @@ impl BudgetApp {
             if crate::locale::is_usable_symbol(symbol) {
                 self.settings.currency = Some(symbol.to_owned());
                 self.currency_unsaved = true;
+                self.write_rows();
             } else if was_usable {
                 // Said once as the symbol becomes unusable, not on every key.
                 self.announce(t!("settings-currency-refused", symbol = symbol));
@@ -372,6 +374,7 @@ impl BudgetApp {
             self.settings.save();
             self.currency_unsaved = false;
             self.currency_input = usual.to_owned();
+            self.write_rows();
             self.announce(t!("settings-amounts-shown", amount = self.money(123_456)));
         }
 

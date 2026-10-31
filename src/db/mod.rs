@@ -23,6 +23,8 @@ use std::cell::RefCell;
 use std::path::Path;
 
 pub(crate) use mysql::SCHEMA as MARIADB_SCHEMA;
+#[cfg(test)]
+pub(crate) use mysql::run_script;
 
 /// The messages naming the starting categories, which are added in the
 /// interface's language when the database is made.

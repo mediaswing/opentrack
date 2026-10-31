@@ -86,5 +86,9 @@ fn open(target: impl AsRef<std::ffi::OsStr>) -> std::io::Result<()> {
     } else {
         "xdg-open"
     };
-    std::process::Command::new(program).arg(target).spawn().map(|_| ())
+    let mut child = std::process::Command::new(program).arg(target).spawn()?;
+    // Waited for elsewhere, so it doesn't linger as a zombie process on
+    // macOS and Linux until the app closes.
+    std::thread::spawn(move || child.wait());
+    Ok(())
 }
