@@ -1,0 +1,48 @@
+[package]
+name = "opentrack"
+version = "1.2.0"
+edition = "2024"
+description = "Open Budget Tracker: an accessible, keyboard-first budgeting tool"
+license = "GPL-3.0-or-later"
+readme = "README.md"
+repository = "https://github.com/mediaswing/opentrack"
+publish = false
+
+[[bin]]
+name = "opentrack"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
+egui = "0.36"
+# SQLite built into the app, so nothing needs installing alongside it.
+rusqlite = { version = "0.40", features = ["bundled"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+csv = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rfd = "0.17"
+# Finds the region the system is set to, for dates and amounts.
+sys-locale = "0.3"
+dirs = "7"
+tempfile = "3"
+# Only for asking GitHub whether there is a newer release.
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+log = "0.4"
+anyhow = "1"
+# Translations of the interface, from the files in assets/i18n.
+fluent-bundle = "0.16"
+unic-langid = "0.9"
+
+[dev-dependencies]
+# Reads the translation files in tests, to check them against each other.
+fluent-syntax = "0.12"
+
+[build-dependencies]
+# Embeds the icon in the Windows executable.
+winresource = "0.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

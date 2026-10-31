@@ -1,0 +1,5 @@
+The icon (three rising bars on a green rounded square) was drawn for Open
+Budget Tracker. opentrack.png, opentrack.ico and opentrack.icns are rendered
+by make_icons.py, which needs only Python:
+
+    python assets/icon/make_icons.py assets/icon

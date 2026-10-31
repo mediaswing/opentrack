@@ -1,0 +1,99 @@
+# Builds and tests the app on Windows, macOS and Linux for every push to main
+# and every pull request. The packaging code (src/package/macos.rs and
+# src/package/linux.rs) is only compiled on those systems, so without this it
+# would only be built when a release is tagged (see release.yml).
+#
+# Each job is set up as the release workflow's job for that system is, so
+# what is tested here is what is released. The macOS and Linux jobs also build
+# the .pkg and .deb and check them, but nothing is installed, uploaded or
+# published.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request makes an older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows (x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      # The prefix keeps these caches apart from the release workflow's, so
+      # what CI saves can never change how a release is built.
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          prefix-key: v1-rust-ci
+      - run: cargo test --locked
+
+  macos:
+    name: macOS (Apple Silicon)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          prefix-key: v1-rust-ci
+      - run: cargo test --locked
+      # cargo test builds the app only for integration tests, which there
+      # are none of, so build it.
+      - run: cargo build --locked
+      # The debug build of the app, packaged as the release job packages its
+      # own. The bundle's signature and the installer's contents are checked,
+      # but the package isn't installed.
+      - name: Build and check a .pkg
+        run: |
+          set -euo pipefail
+          target/debug/opentrack --package-macos dist
+          codesign --verify --strict --verbose=2 "dist/root/Open Budget Tracker.app"
+          # Read whole before searching: grep -q stopping early would end
+          # pkgutil with SIGPIPE, which pipefail counts as a failure.
+          files=$(pkgutil --payload-files dist/*.pkg)
+          grep -q 'Open Budget Tracker.app/Contents/MacOS/opentrack$' <<< "$files"
+
+  linux:
+    name: Linux (x86_64)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install the libraries for building a windowed app
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev gcc desktop-file-utils
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          prefix-key: v1-rust-ci
+      - run: cargo test --locked
+      - run: cargo build --locked
+      # The debug build of the app, packaged as the release job packages its
+      # own. The package's fields and contents are checked, but it isn't
+      # installed.
+      - name: Build and check a .deb
+        run: |
+          set -euo pipefail
+          target/debug/opentrack --package-deb dist
+          dpkg-deb --info dist/*.deb
+          desktop-file-validate dist/deb-root/usr/share/applications/opentrack.desktop
+          # Read whole before searching, as for the .pkg above.
+          files=$(dpkg-deb --contents dist/*.deb)
+          echo "$files"
+          grep -q '^-rwxr-xr-x root/root .* \./usr/bin/opentrack$' <<< "$files"
+          grep -q '\./usr/share/applications/opentrack\.desktop$' <<< "$files"
+          grep -q '\./usr/share/icons/hicolor/256x256/apps/opentrack\.png$' <<< "$files"
