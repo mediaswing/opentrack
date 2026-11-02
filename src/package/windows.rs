@@ -44,9 +44,13 @@ fn wxs(exe: &Path) -> String {
     let exe_name = concat!(env!("CARGO_PKG_NAME"), ".exe");
     let source = xml_escape(&exe.display().to_string());
     let program_files = if wix_arch() == "x86" { "ProgramFilesFolder" } else { "ProgramFiles64Folder" };
-    // The shortcut is advertised, so it needs no registry value of its own
-    // (ICE43); an advertised shortcut takes its icon from the Icon table, and
-    // that icon's id has to end in the target's extension (ICE50).
+    // There is no Icon table: the MSI stores each icon uncompressed, and the
+    // only icon to hand is the executable itself, which would put a second,
+    // uncompressed copy of the program in the installer. So the shortcut isn't
+    // advertised (an advertised one must name an icon from that table), and
+    // Windows shows the installed executable's own icon for it. A shortcut
+    // that isn't advertised needs a component of its own whose key path is a
+    // per-user registry value (ICE43).
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
@@ -54,19 +58,22 @@ fn wxs(exe: &Path) -> String {
            UpgradeCode="{UPGRADE_CODE}" Scope="perMachine" Compressed="yes">
     <MajorUpgrade DowngradeErrorMessage="A newer version of {APP_NAME} is already installed." />
     <MediaTemplate EmbedCab="yes" />
-    <Icon Id="{exe_name}" SourceFile="{source}" />
-    <Property Id="ARPPRODUCTICON" Value="{exe_name}" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/mediaswing/opentrack" />
     <StandardDirectory Id="{program_files}">
       <Directory Id="INSTALLFOLDER" Name="{APP_NAME}">
         <Component>
-          <File Id="MainExe" Source="{source}" Name="{exe_name}" KeyPath="yes">
-            <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="{APP_NAME}"
-                      Description="Track your spending by month and category"
-                      WorkingDirectory="INSTALLFOLDER" Icon="{exe_name}" Advertise="yes" />
-          </File>
+          <File Id="MainExe" Source="{source}" Name="{exe_name}" KeyPath="yes" />
         </Component>
       </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="StartMenuShortcut" Name="{APP_NAME}"
+                  Description="Track your spending by month and category"
+                  Target="[INSTALLFOLDER]{exe_name}" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\{MANUFACTURER}\{APP_NAME}"
+                       Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
     </StandardDirectory>
   </Package>
 </Wix>
@@ -127,6 +134,15 @@ mod tests {
         let source = wxs(Path::new(r"C:\a & b\opentrack.exe"));
         assert!(source.contains(r#"Source="C:\a &amp; b\opentrack.exe""#));
         assert!(source.contains(&format!(r#"Version="{}""#, env!("CARGO_PKG_VERSION"))));
+    }
+
+    /// An Icon element would store a second, uncompressed copy of the
+    /// executable in the .msi.
+    #[test]
+    fn wxs_has_no_icon_table() {
+        let source = wxs(Path::new(r"C:\build\opentrack.exe"));
+        assert!(!source.contains("<Icon"));
+        assert!(!source.contains("ARPPRODUCTICON"));
     }
 
     /// Packages the test binary when WiX is installed (CI installs it).

@@ -4,6 +4,15 @@ All notable changes to Open Budget Tracker are recorded here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and each
 release's section becomes its GitHub release notes.
 
+## [Unreleased]
+
+### Fixed
+
+- The Windows installer (`.msi`) is about a quarter of its old size. It no
+  longer stores a second, uncompressed copy of the program to use as the
+  Start menu shortcut's icon; the shortcut now shows the installed program's
+  own icon.
+
 ## [1.0.0] - 2026-11-02
 
 ### Added
