@@ -1,0 +1,53 @@
+# Changelog
+
+All notable changes to Open Budget Tracker are recorded here. The format is
+based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and each
+release's section becomes its GitHub release notes.
+
+## [1.0.0] - 2026-11-02
+
+### Added
+
+- Desktop budget tracker with tabs for Dashboard, Transactions, Categories,
+  Reports and Settings.
+- Dashboard chart of this year's spending, grouped by month or by category.
+- Storage in a built-in SQLite database, or in MariaDB/MySQL.
+- Dates and amounts formatted for the system locale, with optional overrides.
+- Debug log in `output.log`.
+- Checks GitHub for a newer release at startup and shows a link to it in the
+  status bar. It can be turned off, or run on demand, under Settings → Updates.
+- Ad hoc signed macOS installer (`.pkg`) and Debian package (`.deb`), built by
+  the app itself with `--package-macos` and `--package-deb`.
+- Keyboard shortcuts: Ctrl+1 to Ctrl+5 switch tabs, Ctrl+N starts a new
+  transaction, Ctrl+F searches, Ctrl+S adds or saves (and saves settings on the
+  Settings tab), and Esc cancels editing. On macOS they use Cmd. They are listed
+  under Settings.
+
+### Changed
+
+- Unknown regions now show the generic currency sign `¤` instead of `£`, and
+  more regions have their own currency (including Taiwan, Argentina, the
+  Philippines and Thailand).
+- Category colours depend only on the category, so deleting one no longer
+  changes the others' colours.
+- Test connection only checks the database. It no longer creates a SQLite
+  file, tables or default categories.
+- MariaDB/MySQL tables are created with the `utf8mb4` character set.
+
+### Fixed
+
+- Amounts that aren't well-formed numbers are rejected instead of being
+  misread: `0.125` was saved as 125.00, `1e3` as 13.00 and `1.2.3` as 12.30.
+  A Unicode minus sign (`−`) now makes the amount negative instead of being
+  ignored.
+- Connecting to MariaDB/MySQL opens one connection instead of ten, and a
+  server that stops responding can no longer freeze the window indefinitely.
+- Deleting every category no longer brings back the defaults on the next start.
+- Category names are unique ignoring case on SQLite too, as on MariaDB/MySQL.
+- Reports: "Highest month" picks the earliest month on a tie and is hidden
+  when no month has spending, instead of showing December.
+- `--version` and `--help` print in a Windows console.
+- An unreadable `config.json` is copied to `config.json.invalid` and reported,
+  instead of being overwritten by the next save. Settings are saved in one step.
+- The README's instructions for checking the .deb's signature use the release
+  downloads' file names.

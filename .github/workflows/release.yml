@@ -1,0 +1,247 @@
+# Builds the release downloads when a version tag (for example v0.1.0) is
+# pushed, and publishes them on a GitHub release whose text comes from the
+# matching section of CHANGELOG.md. If the repository has a VT_API_KEY secret
+# (a VirusTotal API key), each download is first submitted to VirusTotal and a
+# table of scan links is added to the release notes.
+#
+# Packaging is done by the app itself, so there are no shell scripts:
+#   * macOS: `opentrack --package-macos dist` (src/package/macos.rs) builds the
+#     .app bundle, signs it ad hoc and wraps it in an installer package (.pkg)
+#     that puts it in /Applications. The macos job tests installing it.
+#   * Linux: `opentrack --package-deb dist` (src/package/linux.rs) writes the
+#     .deb. The linux job checks it with dpkg-deb, then renames it to use
+#     hyphens instead of underscores.
+#   * Windows: `opentrack --package-msi dist` (src/package/windows.rs) writes
+#     the WiX source for an .msi and builds it with the WiX Toolset. The
+#     windows job tests installing and uninstalling it.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The app's version (shown by --version and used to name the .deb and .pkg)
+  # comes from Cargo.toml, so check it matches the tag before anything is built.
+  version:
+    name: Check the tag matches Cargo.toml
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          cargo=$(awk -F'"' '/^\[/ { section = $0 } section == "[package]" && /^version *=/ { print $2; exit }' Cargo.toml)
+          if [ "$tag" != "$cargo" ]; then
+            echo "::error::The tag $GITHUB_REF_NAME doesn't match version \"$cargo\" in Cargo.toml. Set the version in Cargo.toml to $tag (and update Cargo.lock), or tag v$cargo instead."
+            exit 1
+          fi
+          echo "Version: $cargo"
+
+  linux:
+    name: Ubuntu .deb (amd64)
+    needs: version
+    # The oldest supported Ubuntu LTS, so the package installs on 22.04 and later.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: >-
+            pkg-config zlib1g-dev libxkbcommon-dev libwayland-dev
+            libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+          version: 1
+      - uses: dtolnay/rust-toolchain@stable
+      # The prefix keeps these caches apart from CI's (ci.yml uses v1-rust-ci).
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          prefix-key: v1-rust
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - run: target/release/opentrack --package-deb dist
+      - name: Check the .deb
+        run: |
+          set -euo pipefail
+          deb=$(ls dist/*.deb)
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb"
+      # Debian names the file opentrack_<version>_<arch>.deb; use hyphens to
+      # match the other downloads.
+      - name: Rename with hyphens
+        run: |
+          for f in dist/*.deb; do
+            mv "$f" "dist/$(basename "$f" | tr _ -)"
+          done
+          ls dist
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: linux
+          path: dist/*.deb
+          if-no-files-found: error
+
+  macos:
+    name: macOS .pkg (Apple Silicon)
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          prefix-key: v1-rust
+      - run: cargo test --locked
+      - run: cargo build --release --locked --target aarch64-apple-darwin
+      - run: target/aarch64-apple-darwin/release/opentrack --package-macos dist
+      - name: Test installing the package
+        run: |
+          set -euo pipefail
+          pkg=$(ls dist/*.pkg)
+          sudo installer -pkg "$pkg" -target /
+          app="/Applications/Open Budget Tracker.app"
+          codesign --verify --strict --verbose=2 "$app"
+          echo "Installed app says: $("$app/Contents/MacOS/opentrack" --version)"
+          pkgutil --pkg-info org.opentrack.OpenBudgetTracker
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: macos
+          path: dist/*.pkg
+          if-no-files-found: error
+
+  windows:
+    name: Windows .msi (x64)
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          prefix-key: v1-rust
+      - name: Install the WiX Toolset
+        run: |
+          dotnet tool install --global wix --version 6.0.2
+          "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - name: Build the .msi
+        run: |
+          target/release/opentrack.exe --package-msi dist | Out-Host
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # Install quietly (the runner is an administrator, so there's no UAC
+      # prompt), check the app and its shortcut, then uninstall it again.
+      - name: Test installing the .msi
+        run: |
+          $msi = (Get-ChildItem dist/*.msi).FullName
+          $log = "$env:RUNNER_TEMP\msi-install.log"
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /l*v `"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 50; throw "msiexec /i exited with $($p.ExitCode)" }
+          $app = "$env:ProgramFiles\Open Budget Tracker\opentrack.exe"
+          $shortcut = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Open Budget Tracker.lnk"
+          if (-not (Test-Path $shortcut)) { throw "no Start menu shortcut at $shortcut" }
+          $version = & $app --version | Out-String
+          Write-Output "Installed app says: $version"
+          $p = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x exited with $($p.ExitCode)" }
+          if (Test-Path $app) { throw "uninstalling left $app behind" }
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: windows
+          path: dist/*.msi
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VT_API_KEY: ${{ secrets.VT_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Read release notes from CHANGELOG.md
+        uses: ffurrer2/extract-release-notes@v3.1.0
+        with:
+          release_notes_file: changelog-notes.md
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          path: artifacts
+          merge-multiple: true
+      # Scan before publishing so the results can go into the release notes.
+      # Skipped without a VT_API_KEY secret. A VirusTotal outage must not
+      # block a release, so failures are allowed and the scan table is simply
+      # left out.
+      - name: Scan downloads with VirusTotal
+        id: virustotal
+        if: env.VT_API_KEY != ''
+        continue-on-error: true
+        uses: crazy-max/ghaction-virustotal@v5.0.0
+        with:
+          vt_api_key: ${{ env.VT_API_KEY }}
+          files: |
+            artifacts/*.deb
+            artifacts/*.pkg
+            artifacts/*.msi
+          # The free VirusTotal API allows 4 requests a minute.
+          request_rate: 4
+      - name: Write release notes
+        uses: actions/github-script@v9.0.0
+        env:
+          SCAN_OUTCOME: ${{ steps.virustotal.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const crypto = require('crypto');
+
+            // The changelog section may be empty (or absent).
+            let notes = fs.existsSync('changelog-notes.md')
+              ? fs.readFileSync('changelog-notes.md', 'utf8').trim()
+              : '';
+
+            if (process.env.SCAN_OUTCOME === 'success') {
+              const platform = (name) =>
+                name.endsWith('.deb') ? 'Ubuntu' :
+                name.endsWith('.msi') ? 'Windows' :
+                name.includes('-macos-') ? 'Apple Silicon' : '';
+              const rows = fs.readdirSync('artifacts')
+                .filter((name) => /\.(deb|pkg|msi)$/.test(name))
+                .sort()
+                .map((name) => {
+                  const sha = crypto.createHash('sha256')
+                    .update(fs.readFileSync(path.join('artifacts', name)))
+                    .digest('hex');
+                  // The permanent report for this exact file.
+                  const url = `https://www.virustotal.com/gui/file/${sha}`;
+                  return `| \`${name}\` (${platform(name)}) | \`${sha}\` | [View scan](${url}) |`;
+                });
+              const table = [
+                '## VirusTotal scans',
+                '',
+                '| Download | SHA-256 | Report |',
+                '| --- | --- | --- |',
+                ...rows,
+              ].join('\n');
+              notes = notes ? `${notes}\n\n${table}` : table;
+            } else if (process.env.SCAN_OUTCOME === 'failure') {
+              core.warning('VirusTotal scan failed; publishing without scan results.');
+            }
+
+            fs.writeFileSync('release-notes.md', notes + '\n');
+      - uses: softprops/action-gh-release@v3.0.3
+        with:
+          body_path: release-notes.md
+          files: |
+            artifacts/*.deb
+            artifacts/*.pkg
+            artifacts/*.msi
+          fail_on_unmatched_files: true

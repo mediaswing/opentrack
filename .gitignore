@@ -1,0 +1,5 @@
+/target
+/dist
+output.log
+*.db
+.DS_Store

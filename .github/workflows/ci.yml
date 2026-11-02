@@ -1,0 +1,105 @@
+# Builds and tests the app on Windows, Ubuntu and macOS for every push to main
+# and every pull request. Each system's own code, such as
+# src/package/linux.rs or src/package/macos.rs, can only be compiled on that
+# system, so without this it would only be built when a release is tagged
+# (see release.yml).
+#
+# Each job is set up as the release workflow's job for that system is, so what
+# is tested here is what is released. Each job also builds that system's
+# package and checks it, but nothing is installed, uploaded or published.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request makes an older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      # The prefix keeps these caches apart from the release workflow's, so
+      # what CI saves can never change how a release is built.
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          prefix-key: v1-rust-ci
+      # As in release.yml. The pinned version keeps builds repeatable.
+      - name: Install the WiX Toolset
+        run: |
+          dotnet tool install --global wix --version 6.0.2
+          "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
+      # Among the tests, builds_msi (src/package/windows.rs) packages the test
+      # build as an .msi.
+      - run: cargo test --locked
+      - run: cargo build --locked
+      # The app itself, packaged as the release job packages its own, but not
+      # installed.
+      - name: Build and check an .msi
+        run: |
+          target/debug/opentrack.exe --package-msi dist | Out-Host
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $msi = Get-ChildItem dist/*.msi
+          if ($msi.Count -ne 1) { throw "expected one .msi in dist, found $($msi.Count)" }
+          $msi | Format-Table Name, Length
+
+  ubuntu:
+    name: Ubuntu
+    # As in release.yml: the oldest supported Ubuntu LTS.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: >-
+            pkg-config zlib1g-dev libxkbcommon-dev libwayland-dev
+            libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+          version: 1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          prefix-key: v1-rust-ci
+      # Among the tests, builds_valid_deb (src/package/linux.rs) packages the
+      # test build and checks the .deb with dpkg-deb, which this runner has.
+      - run: cargo test --locked
+
+  macos:
+    name: macOS (Apple Silicon)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          prefix-key: v1-rust-ci
+      # Among the tests, builds_signed_pkg (src/package/macos.rs) packages the
+      # test build and checks the bundle's ad hoc signature.
+      - run: cargo test --locked
+      - run: cargo build --locked
+      # The app itself, packaged as the release job packages its own. The
+      # bundle's signature and the installer's contents are checked, but the
+      # package isn't installed.
+      - name: Build and check a .pkg
+        run: |
+          set -euo pipefail
+          target/debug/opentrack --package-macos dist
+          codesign --verify --strict --verbose=2 "dist/root/Open Budget Tracker.app"
+          # Read whole before searching: grep -q stopping early would end
+          # pkgutil with SIGPIPE, which pipefail counts as a failure.
+          files=$(pkgutil --payload-files dist/*.pkg)
+          grep -q 'Open Budget Tracker.app/Contents/MacOS/opentrack$' <<< "$files"
