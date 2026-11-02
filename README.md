@@ -182,6 +182,11 @@ cargo test     # money parsing/formatting, schema splitting, SQLite round trip
 cargo clippy
 ```
 
+## Security
+
+To report a vulnerability, please use GitHub's private reporting rather than a
+public issue. See [SECURITY.md](SECURITY.md) for details.
+
 ## License
 
 Open Budget Tracker is released under the [MIT License](LICENSE).
