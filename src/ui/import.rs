@@ -6,6 +6,7 @@ use std::path::Path;
 use egui::RichText;
 
 use super::App;
+use crate::db::Spending;
 use crate::import::{self, Mapping, Options, Plan, Table};
 use crate::locale::DateOrder;
 
@@ -66,7 +67,7 @@ impl App {
         log::debug!("Import columns guessed as {mapping:?}");
         // Unknown categories go into the most used one, unless they are created.
         let mut uses = std::collections::HashMap::<i64, usize>::new();
-        for s in &self.spending {
+        for s in self.spending.iter().filter(|s| self.can_change(s)) {
             *uses.entry(s.bucket).or_default() += 1;
         }
         let default_category =
@@ -83,10 +84,16 @@ impl App {
     }
 
     pub(super) fn import_dialog(&mut self, ctx: &egui::Context) {
+        let me = self.store.as_ref().and_then(|s| s.me());
         let Some(d) = self.import.dialog.as_mut() else { return };
         let key = (d.mapping.clone(), d.options.clone());
         if d.planned_for.as_ref() != Some(&key) {
-            let plan = import::plan(d.mapping.rows(&d.table), &self.categories, &self.spending, &d.options);
+            // Only the user's own transactions (and those without an owner)
+            // count as already recorded. A teammate's shared one that looks
+            // the same is theirs, not a copy of this one.
+            let own: Vec<Spending> =
+                self.spending.iter().filter(|s| s.owner.is_none() || s.owner.as_deref() == me).cloned().collect();
+            let plan = import::plan(d.mapping.rows(&d.table), &self.categories, &own, &d.options);
             // Agreeing to leave out some lines doesn't agree to leave out others.
             if plan.errors != d.plan.errors {
                 d.skip_errors = false;

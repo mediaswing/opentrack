@@ -16,6 +16,8 @@ pub struct State {
     test_result: Option<(bool, String)>,
     /// A backup read from a file, waiting for the user to confirm the restore.
     restore: Option<(PathBuf, Backup)>,
+    /// This computer's identity, used when none is chosen, or why it is unknown.
+    automatic_identity: Result<String, String>,
 }
 
 impl State {
@@ -26,6 +28,7 @@ impl State {
             port: cfg.mysql.port.to_string(),
             test_result: None,
             restore: None,
+            automatic_identity: crate::identity::automatic().map_err(|e| format!("{e:#}")),
         }
     }
 
@@ -46,6 +49,12 @@ impl State {
             cfg.mysql.port = self.port.trim().parse().map_err(|_| format!("'{}' is not a valid port", self.port))?;
             if cfg.mysql.host.trim().is_empty() || cfg.mysql.database.trim().is_empty() {
                 return Err("Host and database name are required".into());
+            }
+            cfg.mysql.identity = cfg.mysql.identity.trim().to_string();
+            if !cfg.mysql.identity.is_empty() {
+                crate::identity::check(&cfg.mysql.identity).map_err(|e| e.to_string())?;
+            } else if let Err(e) = &self.automatic_identity {
+                return Err(format!("Enter an identity: {e}"));
             }
         }
         if cfg.currency_override.trim().chars().count() > 4 {
@@ -98,13 +107,32 @@ impl App {
                     ui.label("Password");
                     ui.add(egui::TextEdit::singleline(&mut m.password).password(true).desired_width(240.0));
                     ui.end_row();
+                    ui.label("Identity");
+                    let automatic = match &s.automatic_identity {
+                        Ok(id) => id.as_str(),
+                        Err(_) => "Required: this computer's couldn't be found",
+                    };
+                    ui.add(
+                        egui::TextEdit::singleline(&mut m.identity)
+                            .hint_text(automatic)
+                            .char_limit(crate::identity::MAX_CHARS)
+                            .desired_width(240.0),
+                    )
+                    .on_hover_text(
+                        "Who you are on a shared database: others can't see your transactions. Filled in with \
+                         this computer's identity the first time you connect, and kept if the computer is \
+                         renamed. Enter the same identity on each computer you use to see your transactions on \
+                         all of them, or clear it to use this computer's again.",
+                    );
+                    ui.end_row();
                 }
             });
             if s.draft.backend == Backend::MySql {
                 ui.label(
                     RichText::new(
                         "The database must already exist; tables and default categories are created \
-                         automatically. The password is stored in plain text in config.json.",
+                         automatically. The password is stored in plain text in config.json. Identity is \
+                         filled in when you connect; enter the same one on each computer you use.",
                     )
                     .small()
                     .weak(),
@@ -403,8 +431,12 @@ impl App {
             format!("{} at {}", self.locale.format_date(local.date()), local.strftime("%H:%M"))
         });
         let target = self.store.as_ref().map_or_else(String::new, |s| s.describe());
-        let shared = self.me().is_some();
-        let own = self.spending.iter().filter(|s| s.owner.as_deref() == self.me()).count();
+        let shared = self.shared;
+        let own = if shared {
+            self.spending.iter().filter(|s| s.owner.as_deref() == self.me()).count()
+        } else {
+            self.spending.len()
+        };
         let response = egui::Modal::new(egui::Id::unique("confirm_restore")).show(ui.ctx(), |ui| {
             ui.set_max_width(520.0);
             ui.heading("Restore this backup?");
@@ -466,12 +498,23 @@ impl App {
             log::error!("Could not save a copy before restoring: {e:#}");
             return self.set_error(format!("Nothing was restored, because a copy of the current data couldn't be saved: {e:#}"));
         }
-        let what = format!(
-            "Restored {} categories and {} transactions. The previous data was saved to {}",
-            b.categories.len(),
-            b.spending.len(),
-            copy.display()
-        );
+        let what = if self.shared {
+            // Categories are only added if missing, and only the user's own
+            // transactions were replaced.
+            format!(
+                "Restored {} of your transactions; categories the backup needed were added if missing. \
+                 Your previous transactions were saved to {}",
+                b.spending.len(),
+                copy.display()
+            )
+        } else {
+            format!(
+                "Restored {} categories and {} transactions. The previous data was saved to {}",
+                b.categories.len(),
+                b.spending.len(),
+                copy.display()
+            )
+        };
         if self.run(&what, |db| db.replace_all(&b.categories, &b.spending)) {
             // Ids in forms and filters may now mean something else.
             self.tx = Default::default();
@@ -522,6 +565,9 @@ impl App {
             }
         }
         self.cfg = cfg;
+        if db_changed {
+            self.pin_identity();
+        }
         self.locale = self.cfg.resolve_locale();
         log::info!("Using locale {} (currency '{}')", self.locale.tag, self.locale.currency_symbol);
         if let Err(e) = self.cfg.save() {

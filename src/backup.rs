@@ -63,13 +63,16 @@ pub struct Backup {
 }
 
 impl Backup {
-    /// Every category and the current user's own transactions. When the
-    /// database isn't shared that is every transaction; on a shared one it
-    /// leaves out teammates' and those without an owner.
+    /// Every category and the current user's transactions. Until other
+    /// people use the database ([`Store::shared`]) that is every transaction;
+    /// after, it leaves out teammates' and those without an owner, which a
+    /// restore doesn't replace.
     pub fn of(store: &mut dyn Store) -> Result<Self> {
         let me = store.me().map(str::to_owned);
         let mut spending = store.spending()?;
-        spending.retain(|s| s.owner == me);
+        if store.shared()? {
+            spending.retain(|s| s.owner == me);
+        }
         Ok(Self { created: Some(jiff::Timestamp::now()), categories: store.categories()?, spending, renamed: Vec::new() })
     }
 

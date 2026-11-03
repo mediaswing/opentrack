@@ -33,6 +33,9 @@ pub struct MySqlSettings {
     pub user: String,
     pub password: String,
     pub database: String,
+    /// Who the user is on a shared database ([`crate::identity`]); empty
+    /// means this computer's automatic identity.
+    pub identity: String,
 }
 
 impl Default for MySqlSettings {
@@ -43,6 +46,7 @@ impl Default for MySqlSettings {
             user: String::new(),
             password: String::new(),
             database: "opentrack".into(),
+            identity: String::new(),
         }
     }
 }

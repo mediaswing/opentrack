@@ -9,18 +9,27 @@ release's section becomes its GitHub release notes.
 ### Added
 
 - People sharing a MariaDB/MySQL database each see only their own
-  transactions. Each person is identified by their Windows SID, or their login
-  name on macOS and Linux, shown under Settings. Teams, set up by the database's
+  transactions. Each person is identified by their Windows SID, or by
+  `login@computer` on macOS and Linux, kept in their settings the first time
+  they connect and shown there. They can enter the same identity on each
+  computer they use, to be one person on all of them. Teams, set up by the database's
   administrator, let members share chosen transactions with each other with the
   new **Share with** choice; only a transaction's owner can change or delete
   it. Categories are still shared by everyone. Transactions recorded before
-  this have no owner and stay visible to everyone. This keeps people apart in
-  the app but is not a security boundary; see the README.
+  this have no owner and stay visible to everyone. Identities are compared
+  exactly, so `Sam` and `sam` are different people. This keeps people apart in
+  the app but is not a security boundary; see the README. Everyone using a
+  database should upgrade together: older versions ignore owners, and
+  restoring a backup with one deletes everyone's data.
 
 ### Changed
 
-- On a shared MariaDB/MySQL database, backups hold only your own transactions,
+- Once other people use a MariaDB/MySQL database (someone else owns a
+  transaction, or a team exists), backups hold only your own transactions,
   and restoring replaces only those, leaving everyone else's data alone.
+  Until then backup and restore work on everything, as before.
+- When this year's spending and refunds cancel out, the Dashboard says so
+  instead of saying no spending is recorded.
 
 - The Dashboard chart leaves out months and categories with no spending in
   the year, so only bars with something to show are drawn.

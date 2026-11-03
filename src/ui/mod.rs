@@ -55,6 +55,8 @@ pub struct App {
     spending: Vec<Spending>,
     /// The teams the user belongs to, on a shared database.
     teams: Vec<Team>,
+    /// Whether other people use the database too ([`Store::shared`]).
+    shared: bool,
     tab: Tab,
     status: Option<Status>,
     dash: dashboard::State,
@@ -91,6 +93,7 @@ impl App {
             categories: Vec::new(),
             spending: Vec::new(),
             teams: Vec::new(),
+            shared: false,
             tab: Tab::Dashboard,
             status: None,
             dash: dashboard::State::default(),
@@ -113,6 +116,12 @@ impl App {
         match db::open(&app.cfg) {
             Ok(store) => {
                 app.store = Some(store);
+                if app.pin_identity() {
+                    if let Err(e) = app.cfg.save() {
+                        log::warn!("Could not save the identity in settings: {e:#}");
+                    }
+                    app.settings = settings::State::new(&app.cfg);
+                }
                 app.reload();
             }
             Err(e) => {
@@ -129,9 +138,10 @@ impl App {
     /// Re-read categories and spending from the database.
     fn reload(&mut self) {
         let Some(store) = self.store.as_mut() else { return };
-        let result = store.categories().and_then(|c| Ok((c, store.spending()?, store.teams()?)));
+        let result = store.categories().and_then(|c| Ok((c, store.spending()?, store.teams()?, store.shared()?)));
         match result {
-            Ok((categories, spending, teams)) => {
+            Ok((categories, spending, teams, shared)) => {
+                self.shared = shared;
                 log::debug!(
                     "Loaded {} categories, {} transactions and {} teams",
                     categories.len(),
@@ -195,6 +205,19 @@ impl App {
 
     fn money(&self, pence: i64) -> String {
         self.locale.format_money(pence)
+    }
+
+    /// Save the identity the database was opened with in the settings, if
+    /// none was chosen, so that renaming the computer doesn't change it.
+    /// Returns whether the settings changed and need saving.
+    fn pin_identity(&mut self) -> bool {
+        if self.cfg.backend != crate::config::Backend::MySql || !self.cfg.mysql.identity.trim().is_empty() {
+            return false;
+        }
+        let Some(me) = self.me().map(str::to_owned) else { return false };
+        log::info!("Keeping identity {me} in settings");
+        self.cfg.mysql.identity = me;
+        true
     }
 
     /// The current user's identity on a shared database ([`Store::me`]).

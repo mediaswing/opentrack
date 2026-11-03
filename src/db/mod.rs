@@ -73,6 +73,13 @@ pub trait Store {
         Ok(Vec::new())
     }
 
+    /// Whether other people use this database too: someone else owns a
+    /// transaction, or a team exists. Until then, backups and restores work
+    /// on everything, as when the database isn't shared.
+    fn shared(&mut self) -> Result<bool> {
+        Ok(false)
+    }
+
     fn categories(&mut self) -> Result<Vec<Category>>;
     fn add_category(&mut self, name: &str) -> Result<()>;
     fn rename_category(&mut self, id: i64, name: &str) -> Result<()>;
@@ -97,9 +104,9 @@ pub trait Store {
 
     /// Restore a backup. All or nothing.
     ///
-    /// When the database isn't shared, every category and transaction is
-    /// deleted and these put in their place, keeping their ids. On a shared
-    /// database only the current user's own transactions are replaced: the
+    /// When the database isn't [`Store::shared`], every category and
+    /// transaction is deleted and these put in their place, keeping their
+    /// ids (on MariaDB/MySQL they become the user's). Once it is, only the current user's own transactions are replaced: the
     /// backup's categories are matched by name (and added if missing), its
     /// transactions are added as the user's, private and with new ids, and
     /// everyone else's data is left alone.

@@ -82,10 +82,16 @@ impl App {
             }
         };
 
-        if total == 0 {
-            ui.label(RichText::new(format!("No spending recorded in {year} yet.")).weak());
-        }
         if bars.is_empty() {
+            // Every month (or category) nets to zero: there is nothing, or
+            // refunds cancel the spending out.
+            let recorded = self.spending.iter().any(|s| s.date.year() == year);
+            let text = if recorded {
+                format!("Spending and refunds in {year} cancel out, so there is nothing to chart.")
+            } else {
+                format!("No spending recorded in {year} yet.")
+            };
+            ui.label(RichText::new(text).weak());
             return;
         }
 

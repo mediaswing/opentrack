@@ -11,10 +11,11 @@ CREATE TABLE IF NOT EXISTS `team` (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
 -- `member` is a user's identity as the app shows it under Settings: a SID
--- (S-1-5-21-...) on Windows, the login name on macOS and Linux.
+-- (S-1-5-21-...) on Windows, login@computer on macOS and Linux, or one they chose. Identities
+-- are compared exactly, so `Sam` and `sam` are different people.
 CREATE TABLE IF NOT EXISTS `team_member` (
     `team` INT NOT NULL,
-    `member` VARCHAR(190) NOT NULL,
+    `member` VARCHAR(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     PRIMARY KEY (`team`, `member`),
     KEY (`member`),
     FOREIGN KEY (`team`) REFERENCES `team` (`id`) ON DELETE CASCADE
@@ -29,7 +30,7 @@ CREATE TABLE IF NOT EXISTS `spending` (
     `date` DATE NOT NULL,
     `price` DECIMAL(8,2) NOT NULL,
     `bucket` INT NOT NULL,
-    `owner` VARCHAR(190) NULL,
+    `owner` VARCHAR(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
     `team` INT NULL,
     KEY (`owner`),
     FOREIGN KEY (`bucket`) REFERENCES `category` (`id`),

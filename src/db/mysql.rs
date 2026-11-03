@@ -57,6 +57,16 @@ fn connect(s: &MySqlSettings, label: &str) -> Result<Pool> {
     Pool::new(opts).with_context(|| format!("connecting to {label}"))
 }
 
+/// Whether `table` in the connection's database has `column`.
+fn has_column(conn: &mut PooledConn, table: &str, column: &str) -> Result<bool> {
+    let n: Option<i64> = conn.exec_first(
+        "SELECT COUNT(*) FROM information_schema.columns
+         WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+        (table, column),
+    )?;
+    Ok(n.unwrap_or(0) > 0)
+}
+
 /// How many of this app's tables exist in the connection's database.
 fn our_tables(conn: &mut PooledConn) -> Result<i64> {
     let n: Option<i64> = conn.query_first(
@@ -68,7 +78,7 @@ fn our_tables(conn: &mut PooledConn) -> Result<i64> {
 
 impl MySqlStore {
     pub fn open(s: &MySqlSettings) -> Result<Self> {
-        let me = crate::identity::current()?;
+        let me = crate::identity::resolve(&s.identity)?;
         log::info!("Signed-in user: {me}");
         Self::open_as(s, me)
     }
@@ -125,18 +135,40 @@ impl MySqlStore {
         }
         // Spending tables made before owners were recorded get the columns
         // now. Their rows have no owner, so everyone can still see them.
-        let has_owner: Option<i64> = conn.query_first(
-            "SELECT COUNT(*) FROM information_schema.columns
-             WHERE table_schema = DATABASE() AND table_name = 'spending' AND column_name = 'owner'",
-        )?;
-        if has_owner.unwrap_or(0) == 0 {
+        if !has_column(&mut conn, "spending", "owner")? {
             log::info!("Adding owner and team columns to the spending table");
-            conn.query_drop(
+            let added = conn.query_drop(
                 "ALTER TABLE spending
-                 ADD COLUMN owner VARCHAR(190) NULL, ADD COLUMN team INT NULL, ADD KEY (owner),
+                 ADD COLUMN owner VARCHAR(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
+                 ADD COLUMN team INT NULL, ADD KEY (owner),
                  ADD FOREIGN KEY (team) REFERENCES team (id) ON DELETE SET NULL",
-            )
-            .context("adding owner and team columns to the spending table")?;
+            );
+            // Someone else connecting at the same moment may have added them first.
+            if let Err(e) = added {
+                anyhow::ensure!(
+                    has_column(&mut conn, "spending", "owner")?,
+                    "adding owner and team columns to the spending table: {e}"
+                );
+                log::info!("The owner and team columns were added by another connection");
+            }
+        }
+        // Identities must match exactly, as the app compares them, so that
+        // `Sam` and `sam` aren't one person. Columns added by the first
+        // version with owners compared them ignoring case (and, on MySQL 8,
+        // accents).
+        for (table, column, key) in [("spending", "owner", "NULL"), ("team_member", "member", "NOT NULL")] {
+            let collation: Option<Option<String>> = conn.exec_first(
+                "SELECT collation_name FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+                (table, column),
+            )?;
+            if collation.flatten().as_deref() != Some("utf8mb4_bin") {
+                log::info!("Making {table}.{column} compare exactly");
+                conn.query_drop(format!(
+                    "ALTER TABLE {table} MODIFY {column} VARCHAR(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin {key}"
+                ))
+                .with_context(|| format!("making {table}.{column} compare exactly"))?;
+            }
         }
         // Tables made by 1.0.0 use the server's default character set, which
         // may not hold every character (emoji, for one). They aren't converted
@@ -170,6 +202,37 @@ impl MySqlStore {
         }
     }
 
+    fn shared_in(&self, conn: &mut impl Queryable) -> Result<bool> {
+        let shared: Option<bool> = conn.exec_first(
+            "SELECT EXISTS (SELECT 1 FROM spending WHERE owner IS NOT NULL AND owner <> ?)
+                 OR EXISTS (SELECT 1 FROM team)",
+            (&self.me,),
+        )?;
+        Ok(shared.unwrap_or(true))
+    }
+
+    /// Restore as 1.1.0 did, for a database nobody else uses yet: replace
+    /// every category and transaction, keeping their ids. The transactions
+    /// become the user's.
+    fn replace_everything(
+        &self,
+        tx: &mut mysql::Transaction<'_>,
+        categories: Vec<(i64, String)>,
+        spending: &[Spending],
+    ) -> Result<()> {
+        let spending: Vec<_> = spending
+            .iter()
+            .map(|s| (s.line, s.name.trim().to_string(), s.date.to_string(), money::to_decimal(s.pence), s.bucket, &self.me))
+            .collect();
+        // DELETE rather than TRUNCATE, which would commit straight away.
+        tx.query_drop("DELETE FROM spending")?;
+        tx.query_drop("DELETE FROM category")?;
+        tx.exec_batch("INSERT INTO category (id, short) VALUES (?, ?)", categories).context("restoring categories")?;
+        tx.exec_batch("INSERT INTO spending (line, name, date, price, bucket, owner) VALUES (?, ?, ?, ?, ?, ?)", spending)
+            .context("restoring transactions")?;
+        Ok(())
+    }
+
     /// Check `team` is unset or one the current user belongs to.
     fn ensure_my_team(&self, conn: &mut impl Queryable, team: Option<i64>) -> Result<()> {
         let Some(team) = team else { return Ok(()) };
@@ -195,6 +258,11 @@ impl Store for MySqlStore {
             (&self.me,),
             |(id, name)| Team { id, name },
         )?)
+    }
+
+    fn shared(&mut self) -> Result<bool> {
+        let mut conn = self.conn()?;
+        self.shared_in(&mut conn)
     }
 
     fn categories(&mut self) -> Result<Vec<Category>> {
@@ -314,8 +382,6 @@ impl Store for MySqlStore {
     }
 
     fn replace_all(&mut self, categories: &[Category], spending: &[Spending]) -> Result<()> {
-        // Other people use this database, so only the user's own
-        // transactions are replaced and no category is removed.
         let categories = categories
             .iter()
             .map(|c| Ok((c.id, validate_category(&c.name)?.to_string())))
@@ -325,6 +391,13 @@ impl Store for MySqlStore {
         }
         let mut conn = self.conn()?;
         let mut tx = conn.start_transaction(TxOpts::default())?;
+        if !self.shared_in(&mut tx)? {
+            self.replace_everything(&mut tx, categories, spending)?;
+            tx.commit()?;
+            return Ok(());
+        }
+        // Other people use this database, so only the user's own
+        // transactions are replaced and no category is removed.
         let existing =
             tx.query_map("SELECT id, short FROM category ORDER BY short, id", |(id, name)| Category { id, name })?;
         let mut by_name: std::collections::HashMap<String, i64> =
@@ -380,7 +453,143 @@ mod tests {
             database: database.into(),
             user: user.into(),
             password: password.into(),
+            identity: String::new(),
         })
+    }
+
+    /// The tests share one database, so they take turns.
+    static DATABASE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Empty the test database and run `setup` in it, while holding it.
+    fn fresh(cfg: &MySqlSettings, setup: &[&str]) -> std::sync::MutexGuard<'static, ()> {
+        let guard = DATABASE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut conn = connect(cfg, "test").unwrap().get_conn().unwrap();
+        for t in ["spending", "team_member", "team", "category"] {
+            conn.query_drop(format!("DROP TABLE IF EXISTS {t}")).unwrap();
+        }
+        for stmt in setup {
+            conn.query_drop(stmt).unwrap();
+        }
+        guard
+    }
+
+    /// The tables as version 1.1.0 made them, before owners were recorded.
+    const V1_1: [&str; 4] = [
+        "CREATE TABLE category (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, short VARCHAR(32) NOT NULL UNIQUE)",
+        "CREATE TABLE spending (line INT NOT NULL PRIMARY KEY AUTO_INCREMENT, name VARCHAR(160) NOT NULL, date DATE NOT NULL, price DECIMAL(8,2) NOT NULL, bucket INT NOT NULL, FOREIGN KEY (bucket) REFERENCES category (id))",
+        "INSERT INTO category (short) VALUES ('Old')",
+        "INSERT INTO spending (name, date, price, bucket) VALUES ('Legacy', '2026-01-01', 1.00, 1)",
+    ];
+
+    fn collation(store: &MySqlStore, table: &str, column: &str) -> String {
+        let c: Option<String> = store
+            .conn()
+            .unwrap()
+            .exec_first(
+                "SELECT collation_name FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+                (table, column),
+            )
+            .unwrap();
+        c.unwrap()
+    }
+
+    #[test]
+    fn identities_compare_exactly() {
+        let Some(cfg) = settings() else { return };
+        // Tables as the first version with owners made them: identities
+        // compared ignoring case.
+        let _db = fresh(&cfg, &[
+            "CREATE TABLE category (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, short VARCHAR(32) NOT NULL UNIQUE) DEFAULT CHARSET = utf8mb4",
+            "CREATE TABLE team (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, name VARCHAR(64) NOT NULL UNIQUE) DEFAULT CHARSET = utf8mb4",
+            "CREATE TABLE team_member (team INT NOT NULL, member VARCHAR(190) NOT NULL, PRIMARY KEY (team, member), KEY (member), FOREIGN KEY (team) REFERENCES team (id) ON DELETE CASCADE) DEFAULT CHARSET = utf8mb4",
+            "CREATE TABLE spending (line INT NOT NULL PRIMARY KEY AUTO_INCREMENT, name VARCHAR(160) NOT NULL, date DATE NOT NULL, price DECIMAL(8,2) NOT NULL, bucket INT NOT NULL, owner VARCHAR(190) NULL, team INT NULL, KEY (owner), FOREIGN KEY (bucket) REFERENCES category (id), FOREIGN KEY (team) REFERENCES team (id) ON DELETE SET NULL) DEFAULT CHARSET = utf8mb4",
+            "INSERT INTO category (short) VALUES ('Food')",
+            "INSERT INTO team VALUES (1, 'Household')",
+            "INSERT INTO team_member VALUES (1, 'Sam')",
+            "INSERT INTO spending (name, date, price, bucket, owner, team) VALUES ('Sam private', '2026-11-01', 1.00, 1, 'Sam', NULL), ('Sam shared', '2026-11-01', 1.00, 1, 'Sam', 1)",
+        ]);
+        let mut sam = MySqlStore::open_as(&cfg, "sam".into()).unwrap();
+        assert_eq!(collation(&sam, "spending", "owner"), "utf8mb4_bin");
+        assert_eq!(collation(&sam, "team_member", "member"), "utf8mb4_bin");
+
+        // `sam` is not `Sam`: none of Sam's rows or teams are theirs.
+        assert!(names(&mut sam).is_empty());
+        assert!(sam.teams().unwrap().is_empty());
+        sam.add_spending(&tx("sam's", 1, None)).unwrap();
+        // Restoring as `sam` leaves Sam's transactions alone.
+        sam.replace_all(&[Category { id: 1, name: "Food".into() }], &[]).unwrap();
+        let mut upper = MySqlStore::open_as(&cfg, "Sam".into()).unwrap();
+        assert_eq!(names(&mut upper), ["Sam private", "Sam shared"]);
+        assert!(names(&mut sam).is_empty());
+    }
+
+    #[test]
+    fn alone_on_an_upgraded_database_works_as_before() {
+        let Some(cfg) = settings() else { return };
+        let _db = fresh(&cfg, &V1_1);
+        let mut alice = MySqlStore::open_as(&cfg, "alice@one".into()).unwrap();
+        alice.add_spending(&tx("New", 1, None)).unwrap();
+        assert!(!alice.shared().unwrap(), "nobody else has used it");
+
+        // The backup has the transactions from before owners, too.
+        let backup = crate::backup::Backup::of(&mut alice).unwrap();
+        let mut backed_up: Vec<&str> = backup.spending.iter().map(|s| s.name.as_str()).collect();
+        backed_up.sort();
+        assert_eq!(backed_up, ["Legacy", "New"]);
+
+        // A restore gives back exactly what was saved, without doubling the
+        // old transactions, and leaves nothing that wasn't in the backup.
+        alice.add_category("Extra").unwrap();
+        alice.add_spending(&tx("After", 1, None)).unwrap();
+        alice.replace_all(&backup.categories, &backup.spending).unwrap();
+        assert_eq!(alice.categories().unwrap(), backup.categories);
+        let lines = |store: &mut MySqlStore| {
+            let mut l: Vec<(i64, String)> = store.spending().unwrap().into_iter().map(|s| (s.line, s.name)).collect();
+            l.sort();
+            l
+        };
+        let mut expected: Vec<(i64, String)> = backup.spending.iter().map(|s| (s.line, s.name.clone())).collect();
+        expected.sort();
+        assert_eq!(lines(&mut alice), expected);
+
+        // Once someone else adds a transaction, backups and restores are
+        // only Alice's own.
+        let mut bob = MySqlStore::open_as(&cfg, "bob@two".into()).unwrap();
+        bob.add_spending(&tx("Bob's", 1, None)).unwrap();
+        assert!(alice.shared().unwrap());
+        let mine = crate::backup::Backup::of(&mut alice).unwrap();
+        assert_eq!(mine.spending.len(), 2, "Legacy and New, restored as Alice's");
+        alice.replace_all(&mine.categories, &[]).unwrap();
+        assert_eq!(names(&mut bob), ["Bob's"]);
+        assert!(names(&mut alice).is_empty());
+    }
+
+    #[test]
+    fn a_team_makes_the_database_shared() {
+        let Some(cfg) = settings() else { return };
+        let _db = fresh(&cfg, &V1_1);
+        let mut alice = MySqlStore::open_as(&cfg, "alice@one".into()).unwrap();
+        assert!(!alice.shared().unwrap());
+        alice.conn().unwrap().query_drop("INSERT INTO team (name) VALUES ('Household')").unwrap();
+        assert!(alice.shared().unwrap());
+    }
+
+    #[test]
+    fn simultaneous_upgrades_all_connect() {
+        let Some(cfg) = settings() else { return };
+        for _ in 0..3 {
+            let _db = fresh(&cfg, &V1_1);
+            let opened: Vec<_> = (0..4)
+                .map(|i| {
+                    let cfg = cfg.clone();
+                    std::thread::spawn(move || MySqlStore::open_as(&cfg, format!("user{i}")).map(|_| ()))
+                })
+                .collect();
+            for t in opened {
+                t.join().unwrap().unwrap();
+            }
+        }
     }
 
     fn tx(name: &str, bucket: i64, team: Option<i64>) -> Spending {
@@ -396,17 +605,8 @@ mod tests {
     #[test]
     fn users_see_only_their_own_and_their_teams() {
         let Some(cfg) = settings() else { return };
-        {
-            let mut conn = connect(&cfg, "test").unwrap().get_conn().unwrap();
-            for t in ["spending", "team_member", "team", "category"] {
-                conn.query_drop(format!("DROP TABLE IF EXISTS {t}")).unwrap();
-            }
-            // A database from before owners were recorded, with one row.
-            conn.query_drop("CREATE TABLE category (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, short VARCHAR(32) NOT NULL UNIQUE)").unwrap();
-            conn.query_drop("CREATE TABLE spending (line INT NOT NULL PRIMARY KEY AUTO_INCREMENT, name VARCHAR(160) NOT NULL, date DATE NOT NULL, price DECIMAL(8,2) NOT NULL, bucket INT NOT NULL, FOREIGN KEY (bucket) REFERENCES category (id))").unwrap();
-            conn.query_drop("INSERT INTO category (short) VALUES ('Old')").unwrap();
-            conn.query_drop("INSERT INTO spending (name, date, price, bucket) VALUES ('Legacy', '2026-01-01', 1.00, 1)").unwrap();
-        }
+        // A database from before owners were recorded, with one row.
+        let _db = fresh(&cfg, &V1_1);
         let mut alice = MySqlStore::open_as(&cfg, "S-1-5-21-1-1001".into()).unwrap();
         let mut bob = MySqlStore::open_as(&cfg, "bob".into()).unwrap();
         let mut carol = MySqlStore::open_as(&cfg, "carol".into()).unwrap();
