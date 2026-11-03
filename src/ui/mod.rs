@@ -1,5 +1,6 @@
 //! The window: tabs down the left, the selected pane on the right.
 
+mod appearance;
 mod categories;
 mod dashboard;
 mod import;
@@ -79,6 +80,7 @@ impl App {
             locale.currency_symbol,
             locale.date_pattern()
         );
+        appearance::apply(&cc.egui_ctx, cfg.appearance);
         let mut app = Self {
             settings: settings::State::new(&cfg),
             cfg,

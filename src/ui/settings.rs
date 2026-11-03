@@ -4,7 +4,7 @@ use egui::RichText;
 
 use super::App;
 use crate::backup::{self, Backup};
-use crate::config::{self, Backend, Config};
+use crate::config::{self, Appearance, Backend, Config};
 use crate::db;
 use crate::locale::Locale;
 use crate::update;
@@ -111,6 +111,9 @@ impl App {
                 );
             }
         });
+
+        ui.add_space(10.0);
+        self.appearance_section(ui);
 
         ui.add_space(10.0);
         egui::Frame::group(ui.style()).inner_margin(10.0).show(ui, |ui| {
@@ -255,6 +258,34 @@ impl App {
             });
         }
         self.confirm_restore_dialog(ui);
+    }
+
+    /// Takes effect and is saved straight away, without the rest of the form.
+    fn appearance_section(&mut self, ui: &mut egui::Ui) {
+        let mut chosen = self.cfg.appearance;
+        egui::Frame::group(ui.style()).inner_margin(10.0).show(ui, |ui| {
+            ui.label(RichText::new("Appearance").strong());
+            ui.add_space(4.0);
+            for a in Appearance::ALL {
+                ui.horizontal(|ui| {
+                    ui.radio_value(&mut chosen, a, a.label());
+                    ui.label(RichText::new(a.description()).weak());
+                });
+            }
+        });
+        if chosen == self.cfg.appearance {
+            return;
+        }
+        super::appearance::apply(ui.ctx(), chosen);
+        self.cfg.appearance = chosen;
+        self.settings.draft.appearance = chosen;
+        match self.cfg.save() {
+            Ok(()) => self.set_info(format!("Appearance: {}", chosen.label())),
+            Err(e) => {
+                log::error!("Saving config failed: {e:#}");
+                self.set_error(format!("Could not save settings: {e:#}"));
+            }
+        }
     }
 
     fn backup_section(&mut self, ui: &mut egui::Ui) {

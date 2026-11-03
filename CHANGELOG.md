@@ -17,6 +17,10 @@ release's section becomes its GitHub release notes.
   under Settings → Backup. A backup restores into either database, so it also
   moves data between SQLite and MariaDB/MySQL. Restoring asks first and saves
   a copy of the current data before replacing it.
+- A choice of appearance under Settings → Appearance: Standard (light colours,
+  Ubuntu Medium) or High contrast (white and yellow on black, Ubuntu Bold).
+  Text was Ubuntu Light before, and the colours followed the system's light
+  or dark mode.
 
 ### Fixed
 

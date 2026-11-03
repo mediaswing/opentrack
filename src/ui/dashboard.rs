@@ -55,7 +55,7 @@ impl App {
                 for s in in_year {
                     months[(s.date.month() - 1) as usize] += s.pence;
                 }
-                let colour = ui.visuals().selection.bg_fill;
+                let colour = super::appearance::chart_colour(self.cfg.appearance, ui.visuals());
                 months.iter().enumerate().map(|(i, p)| (self.locale.month_abbr3(i as i8 + 1), *p, colour)).collect()
             }
             GroupBy::Category => {

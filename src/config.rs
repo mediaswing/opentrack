@@ -11,6 +11,20 @@ pub enum Backend {
     MySql,
 }
 
+/// Colour scheme and font weight.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Appearance {
+    /// Light colours, Ubuntu Medium.
+    #[default]
+    Standard,
+    /// White and yellow on black, Ubuntu Bold.
+    HighContrast,
+}
+
+impl Appearance {
+    pub const ALL: [Appearance; 2] = [Appearance::Standard, Appearance::HighContrast];
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MySqlSettings {
@@ -45,6 +59,7 @@ pub struct Config {
     pub currency_override: String,
     /// Ask GitHub for a newer release at startup.
     pub check_for_updates: bool,
+    pub appearance: Appearance,
 }
 
 impl Default for Config {
@@ -56,6 +71,7 @@ impl Default for Config {
             locale: String::new(),
             currency_override: String::new(),
             check_for_updates: true,
+            appearance: Appearance::Standard,
         }
     }
 }

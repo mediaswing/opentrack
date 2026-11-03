@@ -11,7 +11,7 @@ The window has tabs down the left and the selected pane on the right:
 | **Transactions** | Add, edit and delete spending; filter by month, category or text; import a CSV file |
 | **Categories** | Add, rename and delete categories, with counts and totals for each |
 | **Reports** | Stacked monthly bar chart for a year, plus a category breakdown |
-| **Settings** | Choose the database (SQLite or MariaDB/MySQL), locale and currency, update checks, backup and restore, file locations |
+| **Settings** | Choose the database (SQLite or MariaDB/MySQL), appearance, locale and currency, update checks, backup and restore, file locations |
 
 ## Importing from CSV
 
@@ -33,6 +33,18 @@ UTF-8 are read as Windows-1252. Rows with the same date, description and amount
 as a transaction already recorded are left out, so importing the same statement
 twice doesn't double it. The import is all or nothing: if any row fails,
 nothing is added.
+
+## Appearance
+
+**Settings → Appearance** offers two looks, and the choice takes effect and is
+saved straight away:
+
+- **Standard**: light colours, with text in Ubuntu Medium.
+- **High contrast**: white text and outlines on black, with yellow for what is
+  selected or under the pointer, and text in Ubuntu Bold. Its text colours
+  meet WCAG AAA contrast (at least 7:1).
+
+Neither follows the system's light or dark mode.
 
 ## Backup and restore
 
@@ -225,3 +237,7 @@ public issue. See [SECURITY.md](SECURITY.md) for details.
 ## License
 
 Open Budget Tracker is released under the [MIT License](LICENSE).
+
+The app's text is set in Ubuntu Medium and Ubuntu Bold (`assets/fonts/`),
+which are built into the program. They are copyright Canonical Ltd. and used
+under the [Ubuntu Font Licence 1.0](assets/fonts/UFL.txt).
