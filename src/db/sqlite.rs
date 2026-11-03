@@ -4,7 +4,8 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags, params};
 
 use super::{
-    Category, Spending, Store, ensure_unique_category, parse_date, split_schema, validate_category, validate_spending,
+    Category, ImportRow, Spending, Store, ensure_unique_category, import_categories, parse_date, split_schema,
+    validate_category, validate_spending,
 };
 use crate::money;
 
@@ -174,6 +175,25 @@ impl Store for SqliteStore {
 
     fn delete_spending(&mut self, line: i64) -> Result<()> {
         self.conn.execute("DELETE FROM spending WHERE line = ?1", [line])?;
+        Ok(())
+    }
+
+    fn import(&mut self, rows: &[ImportRow]) -> Result<()> {
+        let existing = self.categories()?;
+        let tx = self.conn.transaction()?;
+        let ids = import_categories(existing, rows, |name| {
+            tx.execute("INSERT INTO category (short) VALUES (?1)", [name])
+                .with_context(|| format!("adding category '{name}'"))?;
+            Ok(tx.last_insert_rowid())
+        })?;
+        {
+            let mut insert = tx.prepare("INSERT INTO spending (name, date, price, bucket) VALUES (?1, ?2, ?3, ?4)")?;
+            for row in rows {
+                let s = row.to_spending(&ids)?;
+                insert.execute(params![s.name, s.date.to_string(), money::to_decimal(s.pence), s.bucket])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 }

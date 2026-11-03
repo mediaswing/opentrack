@@ -2,6 +2,7 @@
 
 mod categories;
 mod dashboard;
+mod import;
 mod reports;
 mod settings;
 mod shortcuts;
@@ -58,6 +59,7 @@ pub struct App {
     cats: categories::State,
     reports: reports::State,
     settings: settings::State,
+    import: import::State,
     /// An update check that is still running.
     update_check: Option<update::Check>,
     /// The last check's result, shown in Settings.
@@ -90,6 +92,7 @@ impl App {
             tx: transactions::State::default(),
             cats: categories::State::default(),
             reports: reports::State::default(),
+            import: import::State::default(),
             update_check: None,
             update_outcome: None,
             update_notice: false,
@@ -240,7 +243,9 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_update_check();
-        self.handle_shortcuts(&ui.ctx().clone());
+        let ctx = ui.ctx().clone();
+        self.handle_shortcuts(&ctx);
+        self.open_dropped_file(&ctx);
         egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui));
         egui::Panel::left("tabs").resizable(false).exact_size(190.0).show(ui, |ui| self.tab_bar(ui));
         egui::CentralPanel::default().show(ui, |ui| {
@@ -265,6 +270,20 @@ impl eframe::App for App {
                 });
             });
         });
+        self.import_dialog(&ctx);
+    }
+}
+
+impl App {
+    /// A file dropped on the window is imported, unless a dialog is open.
+    fn open_dropped_file(&mut self, ctx: &egui::Context) {
+        let dropped = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf()));
+        let Some(path) = dropped else { return };
+        if self.import.is_open() || self.tx.dialog_open() {
+            return;
+        }
+        self.switch_tab(Tab::Transactions);
+        self.open_import(&path);
     }
 }
 

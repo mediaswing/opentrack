@@ -42,8 +42,8 @@ impl App {
     /// Act on shortcuts pressed this frame. Runs before the panels are drawn,
     /// so the focus requests it makes land on this frame's widgets.
     pub(super) fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        // The delete dialog has the keyboard while it is open (Esc closes it).
-        if self.tx.dialog_open() {
+        // A dialog has the keyboard while it is open (Esc closes it).
+        if self.tx.dialog_open() || self.import.is_open() {
             return;
         }
         for t in Tab::ALL {

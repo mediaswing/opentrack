@@ -6,6 +6,14 @@ release's section becomes its GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Import transactions from a CSV file, such as a bank statement, with
+  **Import CSV…** on the Transactions tab or by dropping the file on the
+  window. The columns are guessed and can be changed, a preview shows what
+  will be added, unreadable lines are listed by line number, and transactions
+  already recorded are left out.
+
 ### Fixed
 
 - The Windows installer (`.msi`) is about a quarter of its old size. It no

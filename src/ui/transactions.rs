@@ -73,6 +73,11 @@ impl State {
         self.editing.is_some() || !self.name.trim().is_empty() || !self.amount.trim().is_empty()
     }
 
+    /// Clear the month filter, so transactions from any month are listed.
+    pub(super) fn show_all_months(&mut self) {
+        self.month = None;
+    }
+
     /// Whether the delete confirmation is open.
     pub(super) fn dialog_open(&self) -> bool {
         self.confirm_delete.is_some()
@@ -81,7 +86,18 @@ impl State {
 
 impl App {
     pub(super) fn transactions(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Transactions");
+        ui.horizontal(|ui| {
+            ui.heading("Transactions");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button("📥 Import CSV…")
+                    .on_hover_text("Add transactions from a CSV file, such as a bank statement. You can also drop the file on the window.")
+                    .clicked()
+                {
+                    self.choose_import_file();
+                }
+            });
+        });
         ui.add_space(8.0);
         self.transaction_form(ui);
         ui.add_space(12.0);

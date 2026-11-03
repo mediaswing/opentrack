@@ -6,6 +6,7 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1.0.104"
+csv = "1.4.0"
 directories = "6.0.0"
 eframe = "0.37.0"
 egui = "0.37"
@@ -14,6 +15,7 @@ egui_plot = "0.38.0"
 jiff = "0.2.39"
 log = "0.4.35"
 mysql = "28.0.4"
+rfd = "0.17.2"
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }

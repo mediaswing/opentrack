@@ -8,10 +8,31 @@ The window has tabs down the left and the selected pane on the right:
 | Tab | What it does |
 | --- | --- |
 | **Dashboard** | A chart of this year's total spend, grouped by month or by category (chosen from a dropdown) |
-| **Transactions** | Add, edit and delete spending; filter by month, category or text |
+| **Transactions** | Add, edit and delete spending; filter by month, category or text; import a CSV file |
 | **Categories** | Add, rename and delete categories, with counts and totals for each |
 | **Reports** | Stacked monthly bar chart for a year, plus a category breakdown |
 | **Settings** | Choose the database (SQLite or MariaDB/MySQL), locale and currency, update checks, file locations |
+
+## Importing from CSV
+
+**Import CSV…** on the Transactions tab adds transactions from a CSV file, such
+as a bank statement export. You can also drop the file on the window. The app
+guesses which column is which, and you can change its guesses before importing:
+
+- **Date**: `2026-11-02`, `02/11/2026`, `2.11.26`, `2 Nov 2026` and similar.
+  Day-first or month-first is worked out from the file where it can be, and
+  otherwise follows your locale. A time after the date is ignored.
+- **Description** and **Amount** are required. Amounts are read as in the
+  Amount field. Most bank statements show spending as negative, so the app
+  offers to flip the signs.
+- **Category** is optional. Categories that don't exist yet can be added, and
+  rows without one go into a category you choose.
+
+Cells may be separated by commas, semicolons, tabs or `|`. Files that aren't
+UTF-8 are read as Windows-1252. Rows with the same date, description and amount
+as a transaction already recorded are left out, so importing the same statement
+twice doesn't double it. The import is all or nothing: if any row fails,
+nothing is added.
 
 ## Building and running
 

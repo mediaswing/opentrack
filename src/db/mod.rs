@@ -3,6 +3,8 @@
 mod mysql;
 mod sqlite;
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use jiff::civil::Date;
 
@@ -29,6 +31,16 @@ pub struct Spending {
     pub bucket: i64,
 }
 
+/// A transaction to import. It names its category rather than giving an id,
+/// because the category may not exist yet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportRow {
+    pub name: String,
+    pub date: Date,
+    pub pence: i64,
+    pub category: String,
+}
+
 pub trait Store {
     /// Human-readable description of where the data lives.
     fn describe(&self) -> String;
@@ -43,6 +55,11 @@ pub trait Store {
     fn add_spending(&mut self, s: &Spending) -> Result<()>;
     fn update_spending(&mut self, s: &Spending) -> Result<()>;
     fn delete_spending(&mut self, line: i64) -> Result<()>;
+
+    /// Add many transactions in one go, creating the categories they name
+    /// that don't exist yet (matched ignoring case). Either every row and
+    /// category is added or, if anything fails, none is.
+    fn import(&mut self, rows: &[ImportRow]) -> Result<()>;
 }
 
 /// Open the store selected in the config, creating tables and seed data as needed.
@@ -101,6 +118,35 @@ pub(crate) fn ensure_unique_category(existing: &[Category], name: &str, except: 
         anyhow::bail!("A category called '{}' already exists", clash.name);
     }
     Ok(())
+}
+
+/// Category ids by lowercase name for an import's rows, calling `create` for
+/// each category that doesn't exist yet. Names are created as first spelled.
+pub(crate) fn import_categories(
+    existing: Vec<Category>,
+    rows: &[ImportRow],
+    mut create: impl FnMut(&str) -> Result<i64>,
+) -> Result<HashMap<String, i64>> {
+    let mut ids: HashMap<String, i64> = existing.into_iter().map(|c| (c.name.to_lowercase(), c.id)).collect();
+    for row in rows {
+        let name = validate_category(&row.category)?;
+        if let std::collections::hash_map::Entry::Vacant(slot) = ids.entry(name.to_lowercase()) {
+            slot.insert(create(name)?);
+            log::info!("Import added category '{name}'");
+        }
+    }
+    Ok(ids)
+}
+
+impl ImportRow {
+    pub(crate) fn to_spending(&self, ids: &HashMap<String, i64>) -> Result<Spending> {
+        let bucket = *ids
+            .get(&self.category.trim().to_lowercase())
+            .ok_or_else(|| anyhow::anyhow!("unknown category '{}'", self.category))?;
+        let s = Spending { line: 0, name: self.name.trim().to_string(), date: self.date, pence: self.pence, bucket };
+        validate_spending(&s)?;
+        Ok(s)
+    }
 }
 
 pub(crate) fn validate_spending(s: &Spending) -> Result<()> {
@@ -162,6 +208,30 @@ mod tests {
         let pets = db.categories().unwrap().into_iter().find(|c| c.name == "Pets").unwrap().id;
         db.rename_category(pets, "PETS").unwrap();
         assert!(db.rename_category(pets, "transport").is_err());
+    }
+
+    #[test]
+    fn sqlite_import_is_all_or_nothing() {
+        let mut db = SqliteStore::open_in_memory().unwrap();
+        let row = |name: &str, category: &str| ImportRow {
+            name: name.into(),
+            date: Date::new(2026, 11, 2).unwrap(),
+            pence: 250,
+            category: category.into(),
+        };
+        db.import(&[row("Bus", "Travel"), row("Train", "TRAVEL"), row("Lunch", "food and drink")]).unwrap();
+        let cats = db.categories().unwrap();
+        assert_eq!(cats.len(), 9);
+        let travel = cats.iter().find(|c| c.name == "Travel").unwrap().id;
+        let food = cats.iter().find(|c| c.name == "Food and Drink").unwrap().id;
+        let buckets: Vec<i64> = db.spending().unwrap().iter().map(|s| s.bucket).collect();
+        assert_eq!(buckets.iter().filter(|b| **b == travel).count(), 2);
+        assert!(buckets.contains(&food));
+
+        // A bad row leaves out the whole import, including its new category.
+        assert!(db.import(&[row("Gym", "Fitness"), row("", "Fitness")]).is_err());
+        assert_eq!(db.categories().unwrap().len(), 9);
+        assert_eq!(db.spending().unwrap().len(), 3);
     }
 
     /// A temporary folder for a test's files, removed afterwards.

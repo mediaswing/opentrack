@@ -3,6 +3,7 @@
 
 mod config;
 mod db;
+mod import;
 mod locale;
 mod money;
 mod package;

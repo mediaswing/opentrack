@@ -2,10 +2,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use mysql::prelude::Queryable;
-use mysql::{OptsBuilder, Pool, PoolConstraints, PoolOpts, PooledConn};
+use mysql::{OptsBuilder, Pool, PoolConstraints, PoolOpts, PooledConn, TxOpts};
 
 use super::{
-    Category, Spending, Store, ensure_unique_category, parse_date, split_schema, validate_category, validate_spending,
+    Category, ImportRow, Spending, Store, ensure_unique_category, import_categories, parse_date, split_schema,
+    validate_category, validate_spending,
 };
 use crate::config::MySqlSettings;
 use crate::money;
@@ -192,6 +193,30 @@ impl Store for MySqlStore {
 
     fn delete_spending(&mut self, line: i64) -> Result<()> {
         self.conn()?.exec_drop("DELETE FROM spending WHERE line = ?", (line,))?;
+        Ok(())
+    }
+
+    fn import(&mut self, rows: &[ImportRow]) -> Result<()> {
+        let mut conn = self.conn()?;
+        let mut tx = conn.start_transaction(TxOpts::default())?;
+        let existing =
+            tx.query_map("SELECT id, short FROM category ORDER BY short, id", |(id, name)| Category { id, name })?;
+        let ids = import_categories(existing, rows, |name| {
+            tx.exec_drop("INSERT INTO category (short) VALUES (?)", (name,))
+                .with_context(|| format!("adding category '{name}'"))?;
+            let id = tx.last_insert_id().context("the server didn't return the new category's id")?;
+            Ok(i64::try_from(id)?)
+        })?;
+        let values = rows
+            .iter()
+            .map(|row| {
+                let s = row.to_spending(&ids)?;
+                Ok((s.name, s.date.to_string(), money::to_decimal(s.pence), s.bucket))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        tx.exec_batch("INSERT INTO spending (name, date, price, bucket) VALUES (?, ?, ?, ?)", values)?;
+        // Dropping the transaction without committing rolls it back.
+        tx.commit()?;
         Ok(())
     }
 }
