@@ -29,6 +29,22 @@ pub struct Spending {
     pub pence: i64,
     /// Category id (`bucket` column).
     pub bucket: i64,
+    /// Who added it ([`crate::identity`]), on a shared MariaDB/MySQL
+    /// database. `None` on SQLite, and for rows from before owners were
+    /// recorded, which everyone using the database can see and change.
+    /// Ignored when inserting: new rows belong to the current user.
+    pub owner: Option<String>,
+    /// The team it is shared with, if any. Its members can see it, but only
+    /// its owner can change it.
+    pub team: Option<i64>,
+}
+
+/// A team the current user belongs to. Teams are set up by the database's
+/// administrator (see the README).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Team {
+    pub id: i64,
+    pub name: String,
 }
 
 /// A transaction to import. It names its category rather than giving an id,
@@ -45,15 +61,33 @@ pub trait Store {
     /// Human-readable description of where the data lives.
     fn describe(&self) -> String;
 
+    /// The current user's identity, when the database is shared and each
+    /// person sees only their own and their teams' transactions. `None` when
+    /// it isn't shared (SQLite), and every transaction is the user's.
+    fn me(&self) -> Option<&str> {
+        None
+    }
+
+    /// The teams the current user belongs to, by name.
+    fn teams(&mut self) -> Result<Vec<Team>> {
+        Ok(Vec::new())
+    }
+
     fn categories(&mut self) -> Result<Vec<Category>>;
     fn add_category(&mut self, name: &str) -> Result<()>;
     fn rename_category(&mut self, id: i64, name: &str) -> Result<()>;
     fn delete_category(&mut self, id: i64) -> Result<()>;
 
-    /// All spending, newest first.
+    /// The spending the current user can see, newest first: on a shared
+    /// database, their own, their teams' shared transactions and any without
+    /// an owner.
     fn spending(&mut self) -> Result<Vec<Spending>>;
+    /// Add a transaction owned by the current user, shared with `s.team`
+    /// (which must be one of theirs) if set.
     fn add_spending(&mut self, s: &Spending) -> Result<()>;
+    /// Change a transaction. On a shared database only its owner can.
     fn update_spending(&mut self, s: &Spending) -> Result<()>;
+    /// Delete a transaction. On a shared database only its owner can.
     fn delete_spending(&mut self, line: i64) -> Result<()>;
 
     /// Add many transactions in one go, creating the categories they name
@@ -61,8 +95,14 @@ pub trait Store {
     /// category is added or, if anything fails, none is.
     fn import(&mut self, rows: &[ImportRow]) -> Result<()>;
 
-    /// Delete every category and transaction and put these in their place,
-    /// keeping their ids (as when restoring a backup). All or nothing.
+    /// Restore a backup. All or nothing.
+    ///
+    /// When the database isn't shared, every category and transaction is
+    /// deleted and these put in their place, keeping their ids. On a shared
+    /// database only the current user's own transactions are replaced: the
+    /// backup's categories are matched by name (and added if missing), its
+    /// transactions are added as the user's, private and with new ids, and
+    /// everyone else's data is left alone.
     fn replace_all(&mut self, categories: &[Category], spending: &[Spending]) -> Result<()>;
 }
 
@@ -147,7 +187,15 @@ impl ImportRow {
         let bucket = *ids
             .get(&self.category.trim().to_lowercase())
             .ok_or_else(|| anyhow::anyhow!("unknown category '{}'", self.category))?;
-        let s = Spending { line: 0, name: self.name.trim().to_string(), date: self.date, pence: self.pence, bucket };
+        let s = Spending {
+            line: 0,
+            name: self.name.trim().to_string(),
+            date: self.date,
+            pence: self.pence,
+            bucket,
+            owner: None,
+            team: None,
+        };
         validate_spending(&s)?;
         Ok(s)
     }
@@ -173,7 +221,7 @@ mod tests {
     #[test]
     fn splits_mariadb_schema() {
         let s = split_schema(include_str!("../../schema/mariadb.sql"));
-        assert_eq!(s.create.len(), 2);
+        assert_eq!(s.create.len(), 4);
         assert_eq!(s.seed.len(), 2); // ALTER + INSERT
     }
 
@@ -191,6 +239,8 @@ mod tests {
             date: Date::new(2026, 11, 2).unwrap(),
             pence: 1099,
             bucket: food,
+            owner: None,
+            team: None,
         };
         db.add_spending(&s).unwrap();
         let rows = db.spending().unwrap();

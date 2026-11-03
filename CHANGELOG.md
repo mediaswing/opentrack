@@ -6,7 +6,21 @@ release's section becomes its GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- People sharing a MariaDB/MySQL database each see only their own
+  transactions. Each person is identified by their Windows SID, or their login
+  name on macOS and Linux, shown under Settings. Teams, set up by the database's
+  administrator, let members share chosen transactions with each other with the
+  new **Share with** choice; only a transaction's owner can change or delete
+  it. Categories are still shared by everyone. Transactions recorded before
+  this have no owner and stay visible to everyone. This keeps people apart in
+  the app but is not a security boundary; see the README.
+
 ### Changed
+
+- On a shared MariaDB/MySQL database, backups hold only your own transactions,
+  and restoring replaces only those, leaving everyone else's data alone.
 
 - The Dashboard chart leaves out months and categories with no spending in
   the year, so only bars with something to show are drawn.

@@ -1,4 +1,4 @@
-//! Backups: every category and transaction in one JSON file.
+//! Backups: every category and the user's transactions in one JSON file.
 //!
 //! A backup restores into either backend, so it also moves data between
 //! SQLite and MariaDB/MySQL. Amounts are written as decimal text (`"12.50"`),
@@ -63,14 +63,14 @@ pub struct Backup {
 }
 
 impl Backup {
-    /// Everything in the store.
+    /// Every category and the current user's own transactions. When the
+    /// database isn't shared that is every transaction; on a shared one it
+    /// leaves out teammates' and those without an owner.
     pub fn of(store: &mut dyn Store) -> Result<Self> {
-        Ok(Self {
-            created: Some(jiff::Timestamp::now()),
-            categories: store.categories()?,
-            spending: store.spending()?,
-            renamed: Vec::new(),
-        })
+        let me = store.me().map(str::to_owned);
+        let mut spending = store.spending()?;
+        spending.retain(|s| s.owner == me);
+        Ok(Self { created: Some(jiff::Timestamp::now()), categories: store.categories()?, spending, renamed: Vec::new() })
     }
 
     /// Write the backup to `path`. The file is written beside it first and
@@ -144,7 +144,7 @@ impl Backup {
             let what = || format!("transaction {}", t.id);
             let date = t.date.parse().map_err(|e| anyhow::anyhow!("invalid date '{}': {e}", t.date)).with_context(what)?;
             let pence = money::parse(&t.amount).map_err(anyhow::Error::msg).with_context(what)?;
-            let s = Spending { line: t.id, name: t.description.trim().to_string(), date, pence, bucket: t.category };
+            let s = Spending { line: t.id, name: t.description.trim().to_string(), date, pence, bucket: t.category, owner: None, team: None };
             validate_spending(&s).with_context(what)?;
             anyhow::ensure!(ids.contains(&s.bucket), "transaction {} has category {}, which isn't in the backup", t.id, t.category);
             anyhow::ensure!(lines.insert(s.line), "transaction id {} appears twice", s.line);
@@ -212,7 +212,7 @@ mod tests {
         db.add_category("Café ☕").unwrap();
         let cat = db.categories().unwrap().into_iter().find(|c| c.name == "Café ☕").unwrap().id;
         for (name, pence) in [("Flat white", 340), ("Refund", -340), ("Beans", 99_999_999)] {
-            let s = Spending { line: 0, name: name.into(), date: Date::new(2026, 11, 3).unwrap(), pence, bucket: cat };
+            let s = Spending { line: 0, name: name.into(), date: Date::new(2026, 11, 3).unwrap(), pence, bucket: cat, owner: None, team: None };
             db.add_spending(&s).unwrap();
         }
         let before = Backup::of(&mut db).unwrap();

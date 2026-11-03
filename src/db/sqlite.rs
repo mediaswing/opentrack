@@ -150,7 +150,7 @@ impl Store for SqliteStore {
         let mut out = Vec::new();
         for row in rows {
             let (line, name, date, pence, bucket) = row?;
-            out.push(Spending { line, name, date: parse_date(&date)?, pence, bucket });
+            out.push(Spending { line, name, date: parse_date(&date)?, pence, bucket, owner: None, team: None });
         }
         Ok(out)
     }

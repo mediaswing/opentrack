@@ -110,6 +110,31 @@ impl App {
                     .weak(),
                 );
             }
+            if let Some(me) = self.store.as_ref().and_then(|st| st.me()).map(str::to_owned) {
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("You are");
+                    ui.label(RichText::new(&me).monospace())
+                        .on_hover_text("Your identity on this shared database. Give it to the database's administrator to be added to a team.");
+                    if ui.small_button("📋").on_hover_text("Copy").clicked() {
+                        ui.ctx().copy_text(me.clone());
+                    }
+                });
+                let teams = if self.teams.is_empty() {
+                    "You aren't in a team, so only you can see your transactions.".to_string()
+                } else {
+                    let names: Vec<&str> = self.teams.iter().map(|t| t.name.as_str()).collect();
+                    format!("Your teams: {}. Transactions you share with a team are visible to its members.", names.join(", "))
+                };
+                ui.label(
+                    RichText::new(format!(
+                        "Other people using this database can't see your transactions. {teams} Categories are \
+                         shared by everyone."
+                    ))
+                    .small()
+                    .weak(),
+                );
+            }
         });
 
         ui.add_space(10.0);
@@ -293,7 +318,7 @@ impl App {
             ui.label(RichText::new("Backup").strong());
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.button("💾 Back up…").on_hover_text("Save every category and transaction to a file").clicked() {
+                if ui.button("💾 Back up…").on_hover_text("Save every category and your transactions to a file").clicked() {
                     self.back_up();
                 }
                 if ui.button("♻ Restore…").on_hover_text("Replace everything with the contents of a backup").clicked()
@@ -303,9 +328,10 @@ impl App {
             });
             ui.label(
                 RichText::new(
-                    "A backup is one file holding every category and transaction. It restores into SQLite or \
-                     MariaDB/MySQL, so it also moves your data between them. Before a restore replaces your data, \
-                     a copy of it is saved in the data folder's backups folder.",
+                    "A backup is one file holding every category and your transactions. It restores into SQLite \
+                     or MariaDB/MySQL, so it also moves your data between them. Before a restore replaces your \
+                     data, a copy of it is saved in the data folder's backups folder. On a shared MariaDB/MySQL \
+                     database only your own transactions are backed up and replaced.",
                 )
                 .small()
                 .weak(),
@@ -377,6 +403,8 @@ impl App {
             format!("{} at {}", self.locale.format_date(local.date()), local.strftime("%H:%M"))
         });
         let target = self.store.as_ref().map_or_else(String::new, |s| s.describe());
+        let shared = self.me().is_some();
+        let own = self.spending.iter().filter(|s| s.owner.as_deref() == self.me()).count();
         let response = egui::Modal::new(egui::Id::unique("confirm_restore")).show(ui.ctx(), |ui| {
             ui.set_max_width(520.0);
             ui.heading("Restore this backup?");
@@ -396,14 +424,19 @@ impl App {
                 ));
             }
             ui.add_space(4.0);
-            ui.label(
-                RichText::new(format!(
-                    "It replaces everything in the current database: {} categories and {} transactions.",
-                    self.categories.len(),
-                    self.spending.len()
-                ))
-                .color(ui.visuals().warn_fg_color),
-            );
+            let replaces = if shared {
+                format!(
+                    "It replaces your {own} transactions in this shared database, as private transactions. \
+                     Its categories are added if missing; other people's transactions and the other categories \
+                     are kept."
+                )
+            } else {
+                format!(
+                    "It replaces everything in the current database: {} categories and {own} transactions.",
+                    self.categories.len()
+                )
+            };
+            ui.label(RichText::new(replaces).color(ui.visuals().warn_fg_color));
             ui.add(egui::Label::new(RichText::new(&target).small().weak()).truncate()).on_hover_text(&target);
             ui.label(RichText::new("A copy of them is saved first, in the data folder's backups folder.").small().weak());
             ui.add_space(10.0);

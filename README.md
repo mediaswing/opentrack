@@ -54,6 +54,12 @@ also how to move your data from one to the other. Amounts are stored as
 decimal text and ids are kept, so a restore gives back exactly what was saved.
 You can also drop a backup (`.json`) on the window to restore it.
 
+On a shared MariaDB/MySQL database (see [Sharing a database](#sharing-a-database))
+a backup holds every category but only your own transactions, and restoring
+replaces only your own transactions. They come back private, with new ids. The
+backup's categories are matched by name and added if missing, and nobody
+else's data is changed.
+
 A restore replaces everything in the current database, after asking. Before it
 does, the app saves a copy of the current data in the `backups` folder inside
 the data folder (`before-restore-<date>-<time>.json`). A backup that is
@@ -189,7 +195,8 @@ ALTER TABLE category CONVERT TO CHARACTER SET utf8mb4;
 ALTER TABLE spending CONVERT TO CHARACTER SET utf8mb4;
 ```
 
-Both backends use the same schema:
+Both backends use the same categories and transactions tables. MariaDB/MySQL
+also records who added each transaction, and has tables for teams:
 
 - `schema/mariadb.sql`: the MariaDB/MySQL schema
 - `schema/sqlite.sql`: the SQLite equivalent, with the same category IDs (starting at 22)
@@ -198,6 +205,45 @@ Amounts are `DECIMAL(8,2)`, so the largest single amount is 999,999.99. Negative
 amounts are allowed, for refunds.
 
 Switching backends does not copy data between them.
+
+### Sharing a database
+
+Several people can use the same MariaDB/MySQL database. Each person sees only
+their own transactions, plus any that a teammate has shared with a team they
+are both in. Categories are shared by everyone.
+
+People are told apart by their identity on their own computer: on Windows their
+account's security identifier (SID, such as `S-1-5-21-…-1001`), and on macOS
+and Linux their login name. **Settings** shows your identity, with a button to
+copy it. The app reports the identity itself, so it keeps apart people who use
+the app as intended. It is **not** a security boundary: anyone with the
+database's user name and password can read every row with another client. To
+keep data truly private, give each person their own database.
+
+New transactions belong to whoever adds them. Only their owner can change or
+delete them, including shared ones. Transactions recorded by version 1.1.0 or
+earlier have no owner, so everyone can still see and change them. The app adds the `owner` and `team` columns to an older database
+the first time it connects. To give the old transactions an owner:
+
+```sql
+UPDATE spending SET owner = 'S-1-5-21-…-1001' WHERE owner IS NULL;
+```
+
+Teams are set up by the database's administrator; the app only reads them.
+Members are identities, as shown in Settings:
+
+```sql
+INSERT INTO team (name) VALUES ('Household');
+INSERT INTO team_member (team, member) VALUES
+  ((SELECT id FROM team WHERE name = 'Household'), 'S-1-5-21-…-1001'),
+  ((SELECT id FROM team WHERE name = 'Household'), 'sam');
+```
+
+Someone in a team gets a **Share with** choice when adding or editing a
+transaction. It is *Only me* by default. Shared transactions show 👥, and a
+teammate's have 🔒 instead of the edit and delete buttons. Removing someone
+from a team (`DELETE FROM team_member …`) stops them seeing the team's
+transactions. Deleting a team makes its transactions private to their owners.
 
 ## Files
 

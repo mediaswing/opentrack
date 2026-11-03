@@ -4,6 +4,7 @@
 mod backup;
 mod config;
 mod db;
+mod identity;
 mod import;
 mod locale;
 mod money;

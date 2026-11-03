@@ -15,7 +15,7 @@ use egui::{Color32, RichText};
 use jiff::civil::Date;
 
 use crate::config::Config;
-use crate::db::{self, Category, Spending, Store};
+use crate::db::{self, Category, Spending, Store, Team};
 use crate::locale::Locale;
 use crate::update;
 
@@ -53,6 +53,8 @@ pub struct App {
     store: Option<Box<dyn Store>>,
     categories: Vec<Category>,
     spending: Vec<Spending>,
+    /// The teams the user belongs to, on a shared database.
+    teams: Vec<Team>,
     tab: Tab,
     status: Option<Status>,
     dash: dashboard::State,
@@ -88,6 +90,7 @@ impl App {
             store: None,
             categories: Vec::new(),
             spending: Vec::new(),
+            teams: Vec::new(),
             tab: Tab::Dashboard,
             status: None,
             dash: dashboard::State::default(),
@@ -126,12 +129,18 @@ impl App {
     /// Re-read categories and spending from the database.
     fn reload(&mut self) {
         let Some(store) = self.store.as_mut() else { return };
-        let result = store.categories().and_then(|c| Ok((c, store.spending()?)));
+        let result = store.categories().and_then(|c| Ok((c, store.spending()?, store.teams()?)));
         match result {
-            Ok((categories, spending)) => {
-                log::debug!("Loaded {} categories and {} transactions", categories.len(), spending.len());
+            Ok((categories, spending, teams)) => {
+                log::debug!(
+                    "Loaded {} categories, {} transactions and {} teams",
+                    categories.len(),
+                    spending.len(),
+                    teams.len()
+                );
                 self.categories = categories;
                 self.spending = spending;
+                self.teams = teams;
             }
             Err(e) => {
                 log::error!("Reload failed: {e:#}");
@@ -186,6 +195,21 @@ impl App {
 
     fn money(&self, pence: i64) -> String {
         self.locale.format_money(pence)
+    }
+
+    /// The current user's identity on a shared database ([`Store::me`]).
+    fn me(&self) -> Option<&str> {
+        self.store.as_ref().and_then(|s| s.me())
+    }
+
+    /// Whether the user may change `s`: always, unless the database is
+    /// shared and someone else added it.
+    fn can_change(&self, s: &Spending) -> bool {
+        s.owner.is_none() || s.owner.as_deref() == self.me()
+    }
+
+    fn team_name(&self, id: i64) -> Option<&str> {
+        self.teams.iter().find(|t| t.id == id).map(|t| t.name.as_str())
     }
 
     fn category_names(&self) -> HashMap<i64, &str> {

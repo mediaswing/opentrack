@@ -260,7 +260,7 @@ impl Mapping {
         let pence = money::parse(cell(self.amount)).map_err(fail)?;
         let pence = if self.negate { -pence } else { pence };
         let name = cell(self.name).to_string();
-        validate_spending(&Spending { line: 0, name: name.clone(), date, pence, bucket: 0 })
+        validate_spending(&Spending { line: 0, name: name.clone(), date, pence, bucket: 0, owner: None, team: None })
             .map_err(|e| fail(e.to_string()))?;
         let category = Some(cell(self.category).to_string()).filter(|c| !c.is_empty());
         Ok(Parsed { line, date, name, pence, category })
@@ -615,7 +615,7 @@ mod tests {
     #[test]
     fn plans_categories_and_duplicates() {
         let cats = vec![Category { id: 1, name: "Food".into() }, Category { id: 2, name: "Other".into() }];
-        let recorded = vec![Spending { line: 9, name: "Coffee".into(), date: date(2026, 11, 2), pence: 320, bucket: 1 }];
+        let recorded = vec![Spending { line: 9, name: "Coffee".into(), date: date(2026, 11, 2), pence: 320, bucket: 1, owner: None, team: None }];
         let row = |name: &str, pence, category: Option<&str>| {
             Ok(Parsed { line: 1, date: date(2026, 11, 2), name: name.into(), pence, category: category.map(Into::into) })
         };

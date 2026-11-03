@@ -15,6 +15,8 @@ pub struct State {
     date: Date,
     amount: String,
     bucket: Option<i64>,
+    /// The team to share it with, if any. Private by default.
+    team: Option<i64>,
     // Filters
     month: Option<(i16, i8)>,
     category: Option<i64>,
@@ -33,6 +35,7 @@ impl Default for State {
             date: today(),
             amount: String::new(),
             bucket: None,
+            team: None,
             month: Some(month_key(today())),
             category: None,
             search: String::new(),
@@ -49,6 +52,7 @@ impl State {
         self.name.clear();
         self.amount.clear();
         self.date = today();
+        self.team = None;
     }
 
     /// An empty form for a new transaction, ready to type into.
@@ -113,6 +117,10 @@ impl App {
         if self.tx.bucket.is_none_or(|b| !self.categories.iter().any(|c| c.id == b)) {
             self.tx.bucket = self.categories.first().map(|c| c.id);
         }
+        // And the team, as teams change.
+        if self.tx.team.is_some_and(|t| self.team_name(t).is_none()) {
+            self.tx.team = None;
+        }
 
         let title = match self.tx.editing {
             Some(line) => format!("Edit transaction #{line}"),
@@ -175,6 +183,24 @@ impl App {
                     }
                 });
                 ui.end_row();
+
+                // Only on a shared database, for someone in a team.
+                if !self.teams.is_empty() {
+                    ui.label("Share with");
+                    let selected = self.tx.team.and_then(|t| self.team_name(t)).unwrap_or("Only me");
+                    egui::ComboBox::from_id_salt("tx_team")
+                        .selected_text(selected)
+                        .width(200.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.tx.team, None, "Only me");
+                            for t in &self.teams {
+                                ui.selectable_value(&mut self.tx.team, Some(t.id), &t.name);
+                            }
+                        })
+                        .response
+                        .on_hover_text("Everyone in the team can see a shared transaction. Only you can change it.");
+                    ui.end_row();
+                }
             });
             ui.add_space(4.0);
             ui.horizontal(|ui| {
@@ -207,6 +233,8 @@ impl App {
             date: self.tx.date,
             pence,
             bucket,
+            owner: None,
+            team: self.tx.team,
         };
         let ok = match self.tx.editing {
             Some(line) => self.run(&format!("Updated transaction #{line}"), |db| db.update_spending(&s)),
@@ -304,6 +332,10 @@ impl App {
                         });
                         row.col(|ui| {
                             ui.label(&s.name);
+                            if let Some(team) = s.team.and_then(|t| self.team_name(t)) {
+                                let note = if self.can_change(s) { "Shared with" } else { "Shared by a member of" };
+                                ui.label(RichText::new("👥").weak()).on_hover_text(format!("{note} {team}"));
+                            }
                         });
                         row.col(|ui| {
                             ui.label(names.get(&s.bucket).copied().unwrap_or("(unknown)"));
@@ -314,6 +346,11 @@ impl App {
                             });
                         });
                         row.col(|ui| {
+                            if !self.can_change(s) {
+                                ui.label(RichText::new("🔒").weak())
+                                    .on_hover_text("Shared by someone else in your team; only they can change it");
+                                return;
+                            }
                             if ui.small_button("✏").on_hover_text("Edit").clicked() {
                                 edit = Some(s.clone());
                             }
@@ -332,6 +369,7 @@ impl App {
             self.tx.date = s.date;
             self.tx.amount = self.locale.format_amount(s.pence);
             self.tx.bucket = Some(s.bucket);
+            self.tx.team = s.team;
         }
         if delete.is_some() {
             self.tx.confirm_delete = delete;
