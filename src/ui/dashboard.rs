@@ -47,7 +47,8 @@ impl App {
         ui.label(RichText::new(format!("Total spend in {year}: {}", self.money(total))).strong());
         ui.add_space(8.0);
 
-        // (x label, pence, colour) per bar.
+        // (x label, pence, colour) per bar. Months and categories with no
+        // spending are left out, so the chart only shows bars that say something.
         let in_year = self.spending.iter().filter(|s| s.date.year() == year);
         let bars: Vec<(String, i64, egui::Color32)> = match self.dash.group_by {
             GroupBy::Month => {
@@ -56,7 +57,12 @@ impl App {
                     months[(s.date.month() - 1) as usize] += s.pence;
                 }
                 let colour = super::appearance::chart_colour(self.cfg.appearance, ui.visuals());
-                months.iter().enumerate().map(|(i, p)| (self.locale.month_abbr3(i as i8 + 1), *p, colour)).collect()
+                months
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, p)| **p != 0)
+                    .map(|(i, p)| (self.locale.month_abbr3(i as i8 + 1), *p, colour))
+                    .collect()
             }
             GroupBy::Category => {
                 let mut by_cat: HashMap<i64, i64> = HashMap::new();
@@ -66,7 +72,10 @@ impl App {
                 let mut rows: Vec<_> = self
                     .categories
                     .iter()
-                    .map(|c| (c.name.clone(), by_cat.get(&c.id).copied().unwrap_or(0), self.category_colour(c.id)))
+                    .filter_map(|c| {
+                        let pence = by_cat.get(&c.id).copied().filter(|p| *p != 0)?;
+                        Some((c.name.clone(), pence, self.category_colour(c.id)))
+                    })
                     .collect();
                 rows.sort_by_key(|r| std::cmp::Reverse(r.1));
                 rows
@@ -75,6 +84,9 @@ impl App {
 
         if total == 0 {
             ui.label(RichText::new(format!("No spending recorded in {year} yet.")).weak());
+        }
+        if bars.is_empty() {
+            return;
         }
 
         let labels: Vec<String> = bars.iter().map(|b| wrap_label(&b.0)).collect();

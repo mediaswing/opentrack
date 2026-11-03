@@ -4,6 +4,13 @@ All notable changes to Open Budget Tracker are recorded here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and each
 release's section becomes its GitHub release notes.
 
+## [Unreleased]
+
+### Changed
+
+- The Dashboard chart leaves out months and categories with no spending in
+  the year, so only bars with something to show are drawn.
+
 ## [1.1.0] - 2026-11-03
 
 ### Added

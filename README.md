@@ -7,7 +7,7 @@ The window has tabs down the left and the selected pane on the right:
 
 | Tab | What it does |
 | --- | --- |
-| **Dashboard** | A chart of this year's total spend, grouped by month or by category (chosen from a dropdown) |
+| **Dashboard** | A chart of this year's total spend, grouped by month or by category (chosen from a dropdown); months and categories with no spending are hidden |
 | **Transactions** | Add, edit and delete spending; filter by month, category or text; import a CSV file |
 | **Categories** | Add, rename and delete categories, with counts and totals for each |
 | **Reports** | Stacked monthly bar chart for a year, plus a category breakdown |
