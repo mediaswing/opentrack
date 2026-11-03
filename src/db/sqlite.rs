@@ -196,4 +196,27 @@ impl Store for SqliteStore {
         tx.commit()?;
         Ok(())
     }
+
+    fn replace_all(&mut self, categories: &[Category], spending: &[Spending]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM spending", [])?;
+        tx.execute("DELETE FROM category", [])?;
+        {
+            let mut insert = tx.prepare("INSERT INTO category (id, short) VALUES (?1, ?2)")?;
+            for c in categories {
+                let name = validate_category(&c.name)?;
+                insert.execute(params![c.id, name]).with_context(|| format!("restoring category '{name}'"))?;
+            }
+            let mut insert =
+                tx.prepare("INSERT INTO spending (line, name, date, price, bucket) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+            for s in spending {
+                validate_spending(s)?;
+                insert
+                    .execute(params![s.line, s.name.trim(), s.date.to_string(), money::to_decimal(s.pence), s.bucket])
+                    .with_context(|| format!("restoring transaction {}", s.line))?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
 }

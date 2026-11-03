@@ -43,7 +43,7 @@ impl App {
     /// so the focus requests it makes land on this frame's widgets.
     pub(super) fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         // A dialog has the keyboard while it is open (Esc closes it).
-        if self.tx.dialog_open() || self.import.is_open() {
+        if self.tx.dialog_open() || self.import.is_open() || self.settings.dialog_open() {
             return;
         }
         for t in Tab::ALL {

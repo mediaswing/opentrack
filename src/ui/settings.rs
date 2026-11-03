@@ -1,8 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use egui::RichText;
 
 use super::App;
+use crate::backup::{self, Backup};
 use crate::config::{self, Backend, Config};
 use crate::db;
 use crate::locale::Locale;
@@ -13,6 +14,8 @@ pub struct State {
     sqlite_path: String,
     port: String,
     test_result: Option<(bool, String)>,
+    /// A backup read from a file, waiting for the user to confirm the restore.
+    restore: Option<(PathBuf, Backup)>,
 }
 
 impl State {
@@ -22,7 +25,13 @@ impl State {
             sqlite_path: cfg.sqlite_path.display().to_string(),
             port: cfg.mysql.port.to_string(),
             test_result: None,
+            restore: None,
         }
+    }
+
+    /// Whether the restore confirmation is open.
+    pub(super) fn dialog_open(&self) -> bool {
+        self.restore.is_some()
     }
 
     /// Build a config from the form, validating text fields.
@@ -225,6 +234,9 @@ impl App {
             ui.label(RichText::new(msg).color(colour));
         }
 
+        ui.add_space(10.0);
+        self.backup_section(ui);
+
         ui.add_space(16.0);
         ui.separator();
         ui.label(RichText::new("Files").strong());
@@ -241,6 +253,157 @@ impl App {
                 }
                 ui.add(egui::Label::new(RichText::new(&text).monospace()).truncate()).on_hover_text(&text);
             });
+        }
+        self.confirm_restore_dialog(ui);
+    }
+
+    fn backup_section(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::group(ui.style()).inner_margin(10.0).show(ui, |ui| {
+            ui.label(RichText::new("Backup").strong());
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if ui.button("💾 Back up…").on_hover_text("Save every category and transaction to a file").clicked() {
+                    self.back_up();
+                }
+                if ui.button("♻ Restore…").on_hover_text("Replace everything with the contents of a backup").clicked()
+                {
+                    self.choose_restore_file();
+                }
+            });
+            ui.label(
+                RichText::new(
+                    "A backup is one file holding every category and transaction. It restores into SQLite or \
+                     MariaDB/MySQL, so it also moves your data between them. Before a restore replaces your data, \
+                     a copy of it is saved in the data folder's backups folder.",
+                )
+                .small()
+                .weak(),
+            );
+        });
+    }
+
+    fn back_up(&mut self) {
+        let Some(store) = self.store.as_mut() else {
+            return self.set_error("No database is connected — check Settings".into());
+        };
+        let backup = match Backup::of(store.as_mut()) {
+            Ok(b) => b,
+            Err(e) => return self.set_error(format!("Could not back up: {e:#}")),
+        };
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("Back up")
+            .set_file_name(backup::suggested_name())
+            .add_filter("Backup", &["json"])
+            .save_file()
+        else {
+            return;
+        };
+        match backup.write(&path) {
+            Ok(()) => self.set_info(format!(
+                "Backed up {} categories and {} transactions to {}",
+                backup.categories.len(),
+                backup.spending.len(),
+                path.display()
+            )),
+            Err(e) => {
+                log::error!("Backup failed: {e:#}");
+                self.set_error(format!("Could not back up: {e:#}"));
+            }
+        }
+    }
+
+    fn choose_restore_file(&mut self) {
+        let picked = rfd::FileDialog::new()
+            .set_title("Restore a backup")
+            .add_filter("Backup", &["json"])
+            .add_filter("All files", &["*"])
+            .pick_file();
+        if let Some(path) = picked {
+            self.open_restore(&path);
+        }
+    }
+
+    /// Read a backup and ask whether to restore it.
+    pub(super) fn open_restore(&mut self, path: &Path) {
+        if self.store.is_none() {
+            return self.set_error("No database is connected — check Settings".into());
+        }
+        match Backup::read(path) {
+            Ok(b) => self.settings.restore = Some((path.to_path_buf(), b)),
+            Err(e) => {
+                log::error!("Restore failed: {e:#}");
+                self.set_error(format!("Could not restore: {e:#}"));
+            }
+        }
+    }
+
+    fn confirm_restore_dialog(&mut self, ui: &mut egui::Ui) {
+        let Some((path, b)) = &self.settings.restore else { return };
+        let mut close = false;
+        let mut confirmed = false;
+        let made = b.created.map_or("an unknown date".into(), |t| {
+            let local = t.to_zoned(jiff::tz::TimeZone::system());
+            format!("{} at {}", self.locale.format_date(local.date()), local.strftime("%H:%M"))
+        });
+        let target = self.store.as_ref().map_or_else(String::new, |s| s.describe());
+        let response = egui::Modal::new(egui::Id::unique("confirm_restore")).show(ui.ctx(), |ui| {
+            ui.set_max_width(520.0);
+            ui.heading("Restore this backup?");
+            ui.add_space(6.0);
+            let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into());
+            ui.label(format!(
+                "{name} was made on {made}. It has {} categories and {} transactions.",
+                b.categories.len(),
+                b.spending.len()
+            ));
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(format!(
+                    "It replaces everything in the current database: {} categories and {} transactions.",
+                    self.categories.len(),
+                    self.spending.len()
+                ))
+                .color(ui.visuals().warn_fg_color),
+            );
+            ui.add(egui::Label::new(RichText::new(&target).small().weak()).truncate()).on_hover_text(&target);
+            ui.label(RichText::new("A copy of them is saved first, in the data folder's backups folder.").small().weak());
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button("♻ Replace and restore").clicked() {
+                    confirmed = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+            });
+        });
+        if confirmed {
+            if let Some((_, b)) = self.settings.restore.take() {
+                self.restore(&b);
+            }
+        } else if close || response.should_close() {
+            self.settings.restore = None;
+        }
+    }
+
+    fn restore(&mut self, b: &Backup) {
+        // Keep a copy of what is about to be replaced. If that fails, stop.
+        let copy = backup::safety_copy_path();
+        let saved = self.store.as_mut().map(|s| Backup::of(s.as_mut()).and_then(|current| current.write(&copy)));
+        if let Some(Err(e)) = saved {
+            log::error!("Could not save a copy before restoring: {e:#}");
+            return self.set_error(format!("Nothing was restored, because a copy of the current data couldn't be saved: {e:#}"));
+        }
+        let what = format!(
+            "Restored {} categories and {} transactions. The previous data was saved to {}",
+            b.categories.len(),
+            b.spending.len(),
+            copy.display()
+        );
+        if self.run(&what, |db| db.replace_all(&b.categories, &b.spending)) {
+            // Ids in forms and filters may now mean something else.
+            self.tx = Default::default();
+            self.cats = Default::default();
         }
     }
 

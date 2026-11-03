@@ -11,7 +11,7 @@ The window has tabs down the left and the selected pane on the right:
 | **Transactions** | Add, edit and delete spending; filter by month, category or text; import a CSV file |
 | **Categories** | Add, rename and delete categories, with counts and totals for each |
 | **Reports** | Stacked monthly bar chart for a year, plus a category breakdown |
-| **Settings** | Choose the database (SQLite or MariaDB/MySQL), locale and currency, update checks, file locations |
+| **Settings** | Choose the database (SQLite or MariaDB/MySQL), locale and currency, update checks, backup and restore, file locations |
 
 ## Importing from CSV
 
@@ -33,6 +33,20 @@ UTF-8 are read as Windows-1252. Rows with the same date, description and amount
 as a transaction already recorded are left out, so importing the same statement
 twice doesn't double it. The import is all or nothing: if any row fails,
 nothing is added.
+
+## Backup and restore
+
+**Settings → Backup** saves every category and transaction to one JSON file,
+and restores from one. A backup restores into SQLite or MariaDB/MySQL, so it is
+also how to move your data from one to the other. Amounts are stored as
+decimal text and ids are kept, so a restore gives back exactly what was saved.
+You can also drop a backup (`.json`) on the window to restore it.
+
+A restore replaces everything in the current database, after asking. Before it
+does, the app saves a copy of the current data in the `backups` folder inside
+the data folder (`before-restore-<date>-<time>.json`). A backup that is
+damaged, or that was made by a newer version of the app, is refused before
+anything is changed. The restore itself is all or nothing.
 
 ## Building and running
 

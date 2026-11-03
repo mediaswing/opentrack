@@ -275,15 +275,21 @@ impl eframe::App for App {
 }
 
 impl App {
-    /// A file dropped on the window is imported, unless a dialog is open.
+    /// A backup dropped on the window is offered for restore, and any other
+    /// file is imported as CSV, unless a dialog is open.
     fn open_dropped_file(&mut self, ctx: &egui::Context) {
         let dropped = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf()));
         let Some(path) = dropped else { return };
-        if self.import.is_open() || self.tx.dialog_open() {
+        if self.import.is_open() || self.tx.dialog_open() || self.settings.dialog_open() {
             return;
         }
-        self.switch_tab(Tab::Transactions);
-        self.open_import(&path);
+        if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")) {
+            self.switch_tab(Tab::Settings);
+            self.open_restore(&path);
+        } else {
+            self.switch_tab(Tab::Transactions);
+            self.open_import(&path);
+        }
     }
 }
 

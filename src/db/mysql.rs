@@ -219,4 +219,28 @@ impl Store for MySqlStore {
         tx.commit()?;
         Ok(())
     }
+
+    fn replace_all(&mut self, categories: &[Category], spending: &[Spending]) -> Result<()> {
+        let categories = categories
+            .iter()
+            .map(|c| Ok((c.id, validate_category(&c.name)?.to_string())))
+            .collect::<Result<Vec<_>>>()?;
+        let spending = spending
+            .iter()
+            .map(|s| {
+                validate_spending(s)?;
+                Ok((s.line, s.name.trim().to_string(), s.date.to_string(), money::to_decimal(s.pence), s.bucket))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut conn = self.conn()?;
+        // DELETE rather than TRUNCATE, which would commit straight away.
+        let mut tx = conn.start_transaction(TxOpts::default())?;
+        tx.query_drop("DELETE FROM spending")?;
+        tx.query_drop("DELETE FROM category")?;
+        tx.exec_batch("INSERT INTO category (id, short) VALUES (?, ?)", categories).context("restoring categories")?;
+        tx.exec_batch("INSERT INTO spending (line, name, date, price, bucket) VALUES (?, ?, ?, ?, ?)", spending)
+            .context("restoring transactions")?;
+        tx.commit()?;
+        Ok(())
+    }
 }

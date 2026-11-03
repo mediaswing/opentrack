@@ -13,6 +13,10 @@ release's section becomes its GitHub release notes.
   window. The columns are guessed and can be changed, a preview shows what
   will be added, unreadable lines are listed by line number, and transactions
   already recorded are left out.
+- Back up every category and transaction to a JSON file, and restore one,
+  under Settings → Backup. A backup restores into either database, so it also
+  moves data between SQLite and MariaDB/MySQL. Restoring asks first and saves
+  a copy of the current data before replacing it.
 
 ### Fixed
 

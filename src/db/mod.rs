@@ -60,6 +60,10 @@ pub trait Store {
     /// that don't exist yet (matched ignoring case). Either every row and
     /// category is added or, if anything fails, none is.
     fn import(&mut self, rows: &[ImportRow]) -> Result<()>;
+
+    /// Delete every category and transaction and put these in their place,
+    /// keeping their ids (as when restoring a backup). All or nothing.
+    fn replace_all(&mut self, categories: &[Category], spending: &[Spending]) -> Result<()>;
 }
 
 /// Open the store selected in the config, creating tables and seed data as needed.
