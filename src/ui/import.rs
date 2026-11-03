@@ -86,7 +86,12 @@ impl App {
         let Some(d) = self.import.dialog.as_mut() else { return };
         let key = (d.mapping.clone(), d.options.clone());
         if d.planned_for.as_ref() != Some(&key) {
-            d.plan = import::plan(d.mapping.rows(&d.table), &self.categories, &self.spending, &d.options);
+            let plan = import::plan(d.mapping.rows(&d.table), &self.categories, &self.spending, &d.options);
+            // Agreeing to leave out some lines doesn't agree to leave out others.
+            if plan.errors != d.plan.errors {
+                d.skip_errors = false;
+            }
+            d.plan = plan;
             d.planned_for = Some(key);
         }
 

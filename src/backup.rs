@@ -21,6 +21,8 @@ const APP: &str = "opentrack";
 const FORMAT: u32 = 1;
 /// Larger files are refused before they are read.
 const MAX_FILE_BYTES: u64 = 200 * 1024 * 1024;
+/// As enforced by `validate_category`.
+const MAX_CATEGORY_CHARS: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct File {
@@ -54,12 +56,21 @@ pub struct Backup {
     pub created: Option<jiff::Timestamp>,
     pub categories: Vec<Category>,
     pub spending: Vec<Spending>,
+    /// Categories renamed on reading, as `(old, new)`, because their names
+    /// differ from another's only by case. SQLite databases from 1.0.0 can
+    /// hold such pairs, but category names are now unique ignoring case.
+    pub renamed: Vec<(String, String)>,
 }
 
 impl Backup {
     /// Everything in the store.
     pub fn of(store: &mut dyn Store) -> Result<Self> {
-        Ok(Self { created: Some(jiff::Timestamp::now()), categories: store.categories()?, spending: store.spending()? })
+        Ok(Self {
+            created: Some(jiff::Timestamp::now()),
+            categories: store.categories()?,
+            spending: store.spending()?,
+            renamed: Vec::new(),
+        })
     }
 
     /// Write the backup to `path`. The file is written beside it first and
@@ -119,14 +130,13 @@ impl Backup {
         let file: File = serde_json::from_value(value).context("the backup is damaged")?;
 
         let mut ids = HashSet::new();
-        let mut names = HashSet::new();
         let mut categories = Vec::with_capacity(file.categories.len());
-        for c in file.categories {
+        for c in &file.categories {
             let name = validate_category(&c.name).with_context(|| format!("category {}", c.id))?.to_string();
             anyhow::ensure!(ids.insert(c.id), "category id {} appears twice", c.id);
-            anyhow::ensure!(names.insert(name.to_lowercase()), "the category '{name}' appears twice");
             categories.push(Category { id: c.id, name });
         }
+        let renamed = rename_case_duplicates(&mut categories);
 
         let mut lines = HashSet::new();
         let mut spending = Vec::with_capacity(file.transactions.len());
@@ -140,8 +150,36 @@ impl Backup {
             anyhow::ensure!(lines.insert(s.line), "transaction id {} appears twice", s.line);
             spending.push(s);
         }
-        Ok(Self { created: file.created.parse().ok(), categories, spending })
+        Ok(Self { created: file.created.parse().ok(), categories, spending, renamed })
     }
+}
+
+/// Give each category whose name matches an earlier one's, ignoring case, a
+/// name of its own: `food` after `Food` becomes `food (2)`. Its transactions
+/// stay with it. Returns what was renamed.
+fn rename_case_duplicates(categories: &mut [Category]) -> Vec<(String, String)> {
+    let mut taken: HashSet<String> = categories.iter().map(|c| c.name.to_lowercase()).collect();
+    let mut seen = HashSet::new();
+    let mut renamed = Vec::new();
+    for c in categories.iter_mut() {
+        if seen.insert(c.name.to_lowercase()) {
+            continue;
+        }
+        let new = (2..)
+            .map(|n| {
+                let suffix = format!(" ({n})");
+                let room = MAX_CATEGORY_CHARS - suffix.chars().count();
+                let base: String = c.name.chars().take(room).collect();
+                format!("{}{suffix}", base.trim_end())
+            })
+            .find(|name| !taken.contains(&name.to_lowercase()))
+            .expect("some number is free");
+        log::warn!("Backup has categories '{}' that differ only by case; restoring one as '{new}'", c.name);
+        taken.insert(new.to_lowercase());
+        seen.insert(new.to_lowercase());
+        renamed.push((std::mem::replace(&mut c.name, new.clone()), new));
+    }
+    renamed
 }
 
 /// Where a copy of the data goes before a restore replaces it.
@@ -200,6 +238,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// SQLite databases from 1.0.0 can hold `Food` and `food`; their backups
+    /// must still restore, with nothing lost.
+    #[test]
+    fn restores_categories_that_differ_only_by_case() {
+        let long = "A".repeat(32);
+        let json = serde_json::json!({
+            "app": "opentrack", "format": 1, "app_version": "1.0.0", "created": "2026-11-03T00:00:00Z",
+            "categories": [
+                {"id": 22, "name": "Food"}, {"id": 23, "name": "food"}, {"id": 24, "name": "FOOD"},
+                {"id": 25, "name": "Food (2)"}, {"id": 26, "name": long}, {"id": 27, "name": long.to_lowercase()}
+            ],
+            "transactions": [{"id": 1, "date": "2026-11-03", "description": "Lunch", "amount": "1.00", "category": 23}]
+        });
+        let b = Backup::parse(&serde_json::to_vec(&json).unwrap()).unwrap();
+        let names: Vec<&str> = b.categories.iter().map(|c| c.name.as_str()).collect();
+        let short_long = format!("{} (2)", "a".repeat(28));
+        assert_eq!(names, vec!["Food", "food (3)", "FOOD (4)", "Food (2)", long.as_str(), short_long.as_str()]);
+        assert_eq!(b.renamed.len(), 3);
+        assert!(names.iter().all(|n| validate_category(n).is_ok()));
+
+        let mut db = SqliteStore::open_in_memory().unwrap();
+        db.replace_all(&b.categories, &b.spending).unwrap();
+        assert_eq!(db.categories().unwrap().len(), 6);
+        assert_eq!(db.spending().unwrap()[0].bucket, 23, "the transaction keeps its category");
+    }
+
     #[test]
     fn refuses_bad_backups() {
         let good = |f: &mut serde_json::Value| {
@@ -226,7 +290,6 @@ mod tests {
         assert!(check(&|f| f["transactions"][0]["date"] = "2026-02-30".into()).is_err());
         assert!(check(&|f| f["transactions"][0]["amount"] = "lots".into()).is_err());
         assert!(check(&|f| f["transactions"][0]["description"] = "".into()).is_err());
-        assert!(check(&|f| push(&mut f["categories"], serde_json::json!({"id": 23, "name": "FOOD"}))).is_err());
         assert!(check(&|f| push(&mut f["categories"], serde_json::json!({"id": 22, "name": "Other"}))).is_err());
         assert!(check(&|f| {
             let copy = f["transactions"][0].clone();

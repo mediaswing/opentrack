@@ -334,13 +334,18 @@ pub fn parse_date(text: &str, order: DateOrder) -> Result<Date, String> {
         parts.remove(0);
     }
     let [a, b, c] = parts.get(..3).ok_or_else(invalid)?.try_into().map_err(|_| invalid())?;
+    // `08:01:12` is a time, not a date. A time may follow the date.
+    let date_end = c.as_ptr() as usize - text.as_ptr() as usize + c.len();
+    if text[..date_end].contains(':') {
+        return Err(invalid());
+    }
     let num = |t: &str| t.parse::<i16>().ok().filter(|_| t.len() <= 4 && t.bytes().all(|b| b.is_ascii_digit()));
 
     let (year, month, day) = if let Some(i) = [a, b, c].iter().position(|t| month_from_name(t).is_some()) {
         let month = month_from_name([a, b, c][i]).ok_or_else(invalid)?;
         let rest: Vec<&str> = [a, b, c].into_iter().enumerate().filter(|(j, _)| *j != i).map(|(_, t)| t).collect();
         let (y, d) = if rest[0].len() == 4 { (rest[0], rest[1]) } else { (rest[1], rest[0]) };
-        (y, month, num(d).ok_or_else(invalid)?)
+        (y, i16::from(month), num(d).ok_or_else(invalid)?)
     } else {
         let (y, m, d) = if a.len() == 4 {
             (a, b, c)
@@ -351,17 +356,18 @@ pub fn parse_date(text: &str, order: DateOrder) -> Result<Date, String> {
                 DateOrder::Ymd => (a, b, c),
             }
         };
-        (y, num(m).ok_or_else(invalid)? as i8, num(d).ok_or_else(invalid)?)
+        (y, num(m).ok_or_else(invalid)?, num(d).ok_or_else(invalid)?)
     };
     let year = match (year.len(), num(year)) {
         (2, Some(y)) => 2000 + y,
         (4, Some(y)) => y,
         _ => return Err(invalid()),
     };
+    // Checked before narrowing to `i8`, so a month of 268 can't wrap round to 12.
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return Err(invalid());
     }
-    Date::new(year, month, day as i8).map_err(|_| format!("'{text}' is not a real date"))
+    Date::new(year, month as i8, day as i8).map_err(|_| format!("'{text}' is not a real date"))
 }
 
 /// Day-first or month-first, from whichever of the first two numbers goes
@@ -483,6 +489,10 @@ mod tests {
         assert_eq!(parse_date("Mon 2 Nov 2026", Dmy), Ok(date(2026, 11, 2)));
         assert!(parse_date("31/02/2026", Dmy).unwrap_err().contains("real date"));
         assert!(parse_date("13/13/2026", Dmy).is_err());
+        assert!(parse_date("01/268/2026", Dmy).is_err(), "268 must not wrap round to December");
+        assert!(parse_date("268/01/2026", Mdy).is_err());
+        assert!(parse_date("08:01:12", Dmy).is_err(), "a time is not a date");
+        assert!(parse_date("2026:11:02", Dmy).is_err());
         assert!(parse_date("Lunch", Dmy).is_err());
         assert!(parse_date("12.50", Dmy).is_err());
         assert!(parse_date("", Dmy).is_err());
@@ -544,6 +554,14 @@ mod tests {
                 category: Some("Food".into())
             })]
         );
+    }
+
+    #[test]
+    fn time_column_is_not_the_date() {
+        let t = Table::parse("08:01:12,02/11/2026,Lunch,12.50\n17:45:00,03/11/2026,Bus,2.80\n").unwrap();
+        let m = Mapping::guess(&t, DateOrder::Dmy);
+        assert_eq!(m.date, Some(1));
+        assert_eq!(m.rows(&t)[0].as_ref().unwrap().date, date(2026, 11, 2));
     }
 
     #[test]

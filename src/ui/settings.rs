@@ -356,6 +356,14 @@ impl App {
                 b.categories.len(),
                 b.spending.len()
             ));
+            if !b.renamed.is_empty() {
+                let list: Vec<String> = b.renamed.iter().map(|(old, new)| format!("'{old}' as '{new}'")).collect();
+                ui.label(format!(
+                    "Some category names differ only by case, which is no longer allowed, so these are restored \
+                     under new names: {}.",
+                    list.join(", ")
+                ));
+            }
             ui.add_space(4.0);
             ui.label(
                 RichText::new(format!(
