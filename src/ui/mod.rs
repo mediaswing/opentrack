@@ -21,9 +21,11 @@ mod settings;
 mod shortcuts;
 #[cfg(test)]
 mod tests;
+mod updates;
 mod widgets;
 
 use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 use chrono::{Datelike, Local, NaiveDate};
 use egui::accesskit::{Live, Role};
@@ -101,6 +103,8 @@ struct Status {
 }
 
 pub struct App {
+    /// For other threads to ask for the window to be drawn again.
+    ctx: egui::Context,
     db: Db,
     fmt: LocaleFormat,
     dialogs: Box<dyn Dialogs>,
@@ -137,6 +141,15 @@ pub struct App {
 
     // Settings
     locale_input: String,
+    /// Whether to ask GitHub for the latest version when the app starts.
+    check_updates: bool,
+    /// A newer version that GitHub has, once a check has found one.
+    newer_version: Option<crate::update::Version>,
+    checking_for_updates: bool,
+    /// The download page should open in the web browser on this frame.
+    open_downloads: bool,
+    update_tx: Sender<updates::UpdateResult>,
+    update_rx: Receiver<updates::UpdateResult>,
 }
 
 /// Today, in the computer's time zone.
@@ -168,7 +181,11 @@ impl App {
             style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::proportional(24.0));
         });
         let locale_input = db.setting("locale").ok().flatten().unwrap_or_default();
+        // On unless turned off.
+        let check_updates = db.setting("check_updates").ok().flatten().as_deref() != Some("0");
+        let (update_tx, update_rx) = channel();
         let mut app = Self {
+            ctx: ctx.clone(),
             db,
             fmt,
             dialogs,
@@ -191,6 +208,12 @@ impl App {
             entry_to_delete: 0,
             new_category: String::new(),
             locale_input,
+            check_updates,
+            newer_version: None,
+            checking_for_updates: false,
+            open_downloads: false,
+            update_tx,
+            update_rx,
         };
         app.refresh();
         let problem = problems.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" ");
@@ -325,6 +348,10 @@ impl App {
     /// Everything inside the window, once a frame.
     pub fn show(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        self.handle_update_results();
+        if std::mem::take(&mut self.open_downloads) {
+            ctx.open_url(egui::OpenUrl::new_tab(crate::update::RELEASES_URL));
+        }
         self.handle_shortcuts(&ctx);
         egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui));
         // The tabs give up some room when space is short, as when text is made

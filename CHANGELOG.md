@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+- **The app checks for a new version when it starts**, by asking GitHub for the
+  latest version number. If there is one, a dialog offers to open the download
+  page in your web browser; nothing is downloaded or installed by the app. The
+  Settings tab has a **Check for updates now** button, and the check when the
+  app starts can be turned off there.
+
 ## [0.1.0] - 2026-11-18
 
 - **First release.** Record what you spend, list a month's spending, see a

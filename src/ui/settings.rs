@@ -38,6 +38,8 @@ impl App {
             self.use_locale();
         }
 
+        self.updates_section(ui);
+
         heading(ui, "Your Data", 3);
         let database = match &self.paths.database {
             Some(path) => format!("Your spending is kept in {}.", path.display()),

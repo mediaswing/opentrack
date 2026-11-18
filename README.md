@@ -86,6 +86,9 @@ New categories can be chosen on the Add Spending tab straight away.
 - **Locale**: dates and money follow your computer's settings. To use another
   country's formats, type a locale such as `en_GB` or `de_DE` and press **Use this
   locale**. Leave the box empty to follow your computer again.
+- **Updates**: which version this is, and **Check for updates now**. When a newer
+  version is out, a link to download it appears here. **Check for updates when
+  the app starts** can be turned off.
 - Where your spending and the debug log are kept.
 
 Settings are saved as soon as they are changed.
@@ -120,8 +123,17 @@ Everything is kept in one SQLite database, with the debug log beside it:
 | macOS | `~/Library/Application Support/opentrack` |
 | Windows | `%APPDATA%\opentrack` |
 
-The database is `opentrack.db`, and the log is `debug.log`. Nothing leaves your
-computer: the app doesn't use the internet, and doesn't send any statistics.
+The database is `opentrack.db`, and the log is `debug.log`. Your spending never
+leaves your computer, and the app doesn't send any statistics.
+
+| What you do | What leaves your computer |
+| --- | --- |
+| Start the app, unless update checks are turned off, or check for updates | A request to GitHub for the latest version number |
+| Anything else | Nothing |
+
+When a newer version is found as the app starts, it asks whether to open the
+download page in your web browser. The app never downloads or installs anything
+by itself.
 
 The log records what the app does, such as which locale it chose and any errors,
 but not what you bought or how much you spent. When it grows past 1 MB, it is
@@ -169,6 +181,7 @@ On a Mac, the tests also build and check an installer package.
 | `src/db.rs` | The SQLite database |
 | `src/locale.rs` | Finding the locale, and showing and reading dates and money |
 | `src/logger.rs` | The debug log |
+| `src/update.rs` | Asking GitHub for the latest version number |
 | `assets/schema/` | The database's tables for SQLite, as the app makes them, and for MariaDB |
 
 ## Making the installers

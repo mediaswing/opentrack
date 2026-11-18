@@ -482,3 +482,112 @@ fn adding_more_spending_keeps_the_list_up_to_date() {
     assert_eq!(app(&h).entries.len(), 2);
 }
 
+
+// ----- update checks ---------------------------------------------------------
+// None of these reach GitHub: they hand the window the answer a check would give.
+
+fn version_999() -> crate::update::Version {
+    crate::update::Version::parse("999.0.0").unwrap()
+}
+
+/// The answer arrives from the checking thread during a frame, as it does when
+/// the app runs, so the web browser can be asked to open a page. Returns the
+/// page it was asked to open, if any.
+fn update_arrives(h: &mut Window, result: Result<Option<crate::update::Version>, String>, requested: bool) -> Option<String> {
+    app(h).update_tx.send((result, requested)).unwrap();
+    h.step();
+    let opened = h.output().platform_output.commands.iter().find_map(|c| match c {
+        egui::OutputCommand::OpenUrl(open) => Some(open.url.clone()),
+        _ => None,
+    });
+    h.run_steps(2);
+    opened
+}
+
+#[test]
+fn a_new_version_found_at_startup_offers_the_download_page() {
+    let (mut h, script) = window();
+    *script.confirm.borrow_mut() = true;
+    assert_eq!(update_arrives(&mut h, Ok(Some(version_999())), false).as_deref(), Some(crate::update::RELEASES_URL));
+    assert!(script.asked.borrow()[0].starts_with("Update available: Version 999.0.0 of Open Budget Tracking"));
+    assert_eq!(status(&h), "Opening the download page for version 999.0.0 in your web browser.");
+
+    let (mut h, script) = window();
+    assert_eq!(update_arrives(&mut h, Ok(Some(version_999())), false), None, "no opens nothing");
+    assert_eq!(script.asked.borrow().len(), 1);
+    assert!(status(&h).contains("Settings tab has a link"), "the news is still in the status bar: {}", status(&h));
+    assert_eq!(status_live(&h), Live::Polite, "news, not an error");
+}
+
+#[test]
+fn startup_checks_stay_quiet_unless_there_is_news() {
+    let (mut h, script) = window();
+    update_arrives(&mut h, Ok(None), false);
+    update_arrives(&mut h, Err("GitHub could not be reached.".to_owned()), false);
+    assert_eq!(status(&h), "Ready.");
+    // A problem already being shown isn't covered up by news.
+    app_mut(&mut h).set_error("Your settings could not be read.");
+    update_arrives(&mut h, Ok(Some(version_999())), false);
+    assert_eq!(status(&h), "Your settings could not be read.");
+    assert_eq!(script.asked.borrow().len(), 1, "the dialog still offers it");
+}
+
+#[test]
+fn a_new_version_is_linked_to_on_the_settings_tab() {
+    let (mut h, script) = window();
+    command(&mut h, Key::Num5);
+    let says = |h: &Window, text: &str| h.root().children_recursive().any(|n| n.accesskit_node().value().is_some_and(|v| v == text));
+    assert!(says(&h, &format!("This is version {}.", env!("CARGO_PKG_VERSION"))));
+    let links = |h: &Window| h.root().children_recursive().filter(|n| n.accesskit_node().role() == Role::Link).count();
+    assert_eq!(links(&h), 0);
+    // Checking by hand asks nothing, and answers in the status bar.
+    update_arrives(&mut h, Ok(Some(version_999())), true);
+    assert!(script.asked.borrow().is_empty(), "{:?}", script.asked.borrow());
+    assert!(status(&h).starts_with("Version 999.0.0 of Open Budget Tracking is available."), "{}", status(&h));
+    assert_eq!(links(&h), 1);
+    focus_on(&mut h, "Download version 999.0.0 from GitHub");
+    let key = |pressed| Event::Key { key: Key::Enter, physical_key: None, pressed, repeat: false, modifiers: Modifiers::NONE };
+    h.event(key(true));
+    h.step();
+    let opened = h.output().platform_output.commands.iter().find_map(|c| match c {
+        egui::OutputCommand::OpenUrl(open) => Some(open.url.clone()),
+        _ => None,
+    });
+    h.event(key(false));
+    h.run_steps(2);
+    assert_eq!(opened.as_deref(), Some(crate::update::RELEASES_URL));
+}
+
+#[test]
+fn checking_by_hand_always_answers() {
+    let (mut h, _) = window();
+    update_arrives(&mut h, Ok(None), true);
+    assert_eq!(status(&h), format!("You have the latest version, {}.", env!("CARGO_PKG_VERSION")));
+    update_arrives(&mut h, Err("GitHub could not be reached.".to_owned()), true);
+    assert_eq!(status(&h), "Could not check for updates. GitHub could not be reached.");
+    assert_eq!(status_live(&h), Live::Assertive);
+}
+
+#[test]
+fn update_checks_can_be_turned_off_from_the_keyboard() {
+    let (mut h, _) = window();
+    assert!(app(&h).check_updates, "on unless turned off");
+    command(&mut h, Key::Num5);
+    focus_on(&mut h, "Check for updates when the app starts");
+    press(&mut h, Key::ArrowDown);
+    assert!(!app(&h).check_updates);
+    assert_eq!(app(&h).db.setting("check_updates").unwrap().as_deref(), Some("0"));
+    assert_eq!(status(&h), "The app won't check for updates when it starts.");
+    focus_on(&mut h, "Check for updates now");
+}
+
+#[test]
+fn turning_update_checks_off_is_remembered() {
+    let db = Db::open_in_memory().unwrap();
+    db.set_setting("check_updates", Some("0")).unwrap();
+    let (mut h, _) = open(db);
+    assert!(!app(&h).check_updates);
+    // So starting up asks nothing of GitHub.
+    app_mut(&mut h).check_for_updates_at_startup();
+    assert!(!app(&h).checking_for_updates);
+}

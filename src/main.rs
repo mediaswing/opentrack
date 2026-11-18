@@ -8,6 +8,7 @@ mod money;
 #[cfg(any(target_os = "macos", windows))]
 mod package;
 mod ui;
+mod update;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -193,7 +194,10 @@ fn run_gui(args: Args) -> ExitCode {
         options,
         Box::new(move |cc| {
             let dialogs = Box::new(ui::NativeDialogs);
-            Ok(Box::new(ui::App::new(&cc.egui_ctx, db, fmt, dialogs, paths, problems.join(" "))))
+            let mut app = ui::App::new(&cc.egui_ctx, db, fmt, dialogs, paths, problems.join(" "));
+            // Here rather than in App::new, so that tests never reach GitHub.
+            app.check_for_updates_at_startup();
+            Ok(Box::new(app))
         }),
     );
     let code = match result {
