@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-11-18
 
 - **The app checks for a new version when it starts**, by asking GitHub for the
   latest version number. If there is one, a dialog offers to open the download
