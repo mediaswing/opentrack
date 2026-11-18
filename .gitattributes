@@ -1,0 +1,2 @@
+# Keep the SQL samples identical on every system.
+*.sql text eol=lf

@@ -283,7 +283,9 @@ mod tests {
         let mut stmt = conn.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").unwrap();
         rows.extend(
             stmt.query_map([], |r| {
-                Ok(format!("{} {} {}", r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?.unwrap_or_default()))
+                // Line endings don't matter, and Windows checkouts may have CRLF.
+                let sql = r.get::<_, Option<String>>(2)?.unwrap_or_default().replace("\r\n", "\n");
+                Ok(format!("{} {} {sql}", r.get::<_, String>(0)?, r.get::<_, String>(1)?))
             })
             .unwrap()
             .map(|r| r.unwrap()),
