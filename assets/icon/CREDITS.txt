@@ -1,0 +1,2 @@
+opentrack.svg is the Open Budget Tracking icon (originally budgeting_app_icon.svg).
+The .png, .ico and .icns files are made from it.
