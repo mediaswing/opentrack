@@ -1,6 +1,6 @@
 //! Money is stored as whole hundredths (pence, cents) in an integer so that
 //! totals never suffer from floating point rounding. This mirrors the
-//! `DECIMAL(8,2)` column in the original MariaDB schema. Locale-aware
+//! `DECIMAL(8,2)` column in `assets/schema/mariadb.sql`. Locale-aware
 //! formatting and input cleaning live in `locale.rs`; this module only deals
 //! with the canonical form `-1234.56`.
 

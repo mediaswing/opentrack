@@ -2,9 +2,10 @@
 
 Open Budget Tracking is a simple budget tracker, written in Rust. You tell it
 what you spent, and it tells you where your money went, month by month.
-Everything it says is written to be read aloud: it works well with a screen
-reader (VoiceOver on macOS; NVDA, JAWS and Narrator on Windows) and from the
-keyboard alone.
+Accessibility is its guiding principle, as in
+[Common Speech Output](https://github.com/mediaswing/speechout), whose layout it
+shares: everything can be done from the keyboard, and every control can be used
+with a screen reader (VoiceOver on macOS; NVDA, JAWS and Narrator on Windows).
 
 The program is called `opentrack`: that is what to type to start it from a
 terminal, and the name of the file that is installed.
@@ -12,7 +13,7 @@ terminal, and the name of the file that is installed.
 ## What it does
 
 - **Records spending**: what you bought, how much, the date and a category.
-- **Lists a month's spending**, with the total first.
+- **Lists a month's spending**, and deletes entries you no longer want.
 - **Summarises a month by category**, largest first, with each category's
   share of the total.
 - **Starts with eight categories**, such as Food and Drink and Transport, and
@@ -37,91 +38,138 @@ installer's steps; its last page has a box to start the app. On a Mac the app
 has an ad hoc signature: if macOS refuses the package, open **System Settings**,
 then **Privacy & Security**, and choose **Open Anyway**.
 
-Open Budget Tracking runs in a text window. On Windows, the Start menu shortcut
-opens it in a console window. On a Mac, opening it from Applications opens it in
-a new Terminal window.
-
 ## Using it
 
-The main menu has these options. Type the number, or the first word, and press
-Enter:
+The window has five tabs down the left side, with the selected tab's controls to
+the right. Each control has a line to itself, apart from the three buttons that
+change the month, which share one, and the status bar at the bottom says what
+happened. Screen readers announce its messages without the focus moving, and a
+mistake interrupts whatever is being said. Press F2 to hear the last message again.
 
-1. **Add** spending.
-2. **List** spending for a month.
-3. **Summary** of a month by category.
-4. **Delete** a spending entry.
-5. **Categories**: hear the list of categories.
-6. **New** category.
-7. **Help**: hear these options again.
-0. **Quit**.
+### Add Spending
 
-Every question says what to type. Pressing Enter on an empty line cancels what
-you were doing, and nothing is changed.
+Type **What you bought** and the **Amount**, then choose a **Category** and press
+**Save spending**, or Enter in any of the boxes, or Ctrl+S. The status bar reads
+back what was saved, and the focus goes back to **What you bought**, ready for the
+next one. If something needs changing, the status bar says what, and the focus
+goes to that box.
 
-Each line the app writes is a complete sentence, with no tables or columns. Lists
-say how many items they hold before reading them, and end with "End of list".
-Dates are written out in words, and an amount below zero is read as "minus"
-rather than with a hyphen, which some screen readers skip.
+Leave **Date** empty for today, type `yesterday`, or type a date in your usual
+order, such as `18/11/2026` in the UK or `11/18/2026` in the US. `2026-11-18`
+always works, and leaving out the year means this year. Amounts can be typed with
+or without the currency symbol and thousands separators. Both `12.50` and `12,50`
+work where they can't be mistaken for thousands.
 
-### Dates and amounts
+### Spending
 
-When it asks for a date, press Enter for today, type `yesterday`, or type a date
-in your usual order, such as `18/11/2026` in the UK or `11/18/2026` in the US.
-`2026-11-18` always works. Leave out the year for this year.
+Every entry in a month, one on each line, in a box that a screen reader can go
+through line by line. **Previous month**, **This month** and **Next month** change
+the month, and the status bar says how many entries it has and what they come to.
+To delete an entry, choose it in **Entry to delete** and press **Delete this
+entry**. The app asks before deleting anything.
 
-When it asks for a month, press Enter for this month, type `last`, or type a
-month such as `11/2026` or `November`.
+### Summary
 
-Amounts can be typed with or without the currency symbol and thousands
-separators. Both `12.50` and `12,50` work where they can't be mistaken for
-thousands.
+The same month's spending added up by category, largest first, with each
+category's share of the total. Changing the month here changes it on the
+Spending tab too.
 
-## Settings
+### Categories
 
-Open Budget Tracking works these out for itself, and these options change them:
+The categories there are, and a box to add a new one, of up to 32 characters.
+New categories can be chosen on the Add Spending tab straight away.
 
-| Option | Environment variable | What it does |
-| --- | --- | --- |
-| `--db PATH` | `OPENTRACK_DB` | Use a different database file. |
-| `--locale NAME` | `OPENTRACK_LOCALE` | Format dates and money for another locale, such as `en_GB` or `de_DE`. |
-| `--log PATH` | | Write the debug log somewhere else. |
-| | `OPENTRACK_LOG` | How much the debug log records: `off`, `error`, `warn`, `info`, `debug` (the default) or `trace`. |
+### Settings
 
-`opentrack --help` lists the options and says which locale, database and log
-file are in use. `opentrack --version` prints the version.
+- **Colours and text**: **Standard** has light colours and medium-weight text.
+  **High Contrast** has white and yellow on black, with bold text.
+- **Locale**: dates and money follow your computer's settings. To use another
+  country's formats, type a locale such as `en_GB` or `de_DE` and press **Use this
+  locale**. Leave the box empty to follow your computer again.
+- Where your spending and the debug log are kept.
 
-### Where your data is kept
+Settings are saved as soon as they are changed.
+
+## Keyboard
+
+Press F1 at any time to see this list in the app. "Ctrl" is Cmd (⌘) on a Mac, where
+F1 and F2 may need you to hold Fn as well, and Page Up and Page Down are Fn+Up and
+Fn+Down.
+
+| Keys | Action |
+| --- | --- |
+| Tab, Shift+Tab | Move between controls |
+| Space, Enter | Press the control with the focus |
+| Ctrl+1, Ctrl+2, Ctrl+3, Ctrl+4, Ctrl+5 | Go to Add Spending, Spending, Summary, Categories or Settings |
+| Ctrl+N | Add spending: go to the first box on the Add Spending tab |
+| Ctrl+S | Save the spending; on the Categories tab, add the category; on the Settings tab, use the locale |
+| Ctrl+Page Up, Ctrl+Page Down | Show the previous or next month, on the Spending and Summary tabs |
+| Escape | Close a dropdown list or the keyboard shortcuts |
+| F1 | Show or hide the keyboard shortcuts |
+| F2 | Say the status message again |
+| Up, Down, Home, End, or a letter | Change the choice in a dropdown |
+| Alt+Down (Option+Down on a Mac) | Open a dropdown's list; Alt+Up closes it |
+| Ctrl+Plus, Ctrl+Minus, Ctrl+0 | Make everything larger or smaller, or reset it |
+
+## Where your data goes
+
+Everything is kept in one SQLite database, with the debug log beside it:
 
 | System | Folder |
 | --- | --- |
 | macOS | `~/Library/Application Support/opentrack` |
 | Windows | `%APPDATA%\opentrack` |
 
-The folder holds the database, `opentrack.db`, and the debug log, `debug.log`.
+The database is `opentrack.db`, and the log is `debug.log`. Nothing leaves your
+computer: the app doesn't use the internet, and doesn't send any statistics.
+
 The log records what the app does, such as which locale it chose and any errors,
 but not what you bought or how much you spent. When it grows past 1 MB, it is
-renamed `debug.log.old` and a new one is started.
+renamed `debug.log.old` and a new one is started. Set `OPENTRACK_LOG` to `off`,
+`error`, `warn`, `info`, `debug` (the default) or `trace` to change how much it
+records.
 
-### Locale
+### Starting it differently
 
-The locale is taken from the first of these that is set: `--locale`,
-`OPENTRACK_LOCALE`, `LC_ALL`, `LC_MONETARY`, `LC_TIME`, `LANG`, and then the
-operating system's own setting. If none can be used, `en_US` is used.
+These change where things are kept, and the locale, for one run:
 
-The locale changes how amounts are shown, not their value: switching from
-`en_GB` to `de_DE` shows £10 as 10 €. The app's own words are in English.
+| Option | Environment variable | What it does |
+| --- | --- | --- |
+| `--db PATH` | `OPENTRACK_DB` | Use a different database file. |
+| `--locale NAME` | | Show dates and money for another locale, such as `en_GB`. |
+| `--log PATH` | | Write the debug log somewhere else. |
 
-## Building from source
+`opentrack --help` lists them, and `opentrack --version` prints the version.
 
-You need Rust 1.89 or later.
+The locale is the first of these that is set: `--locale`, the one chosen on the
+Settings tab, `OPENTRACK_LOCALE`, `LC_ALL`, `LC_MONETARY`, `LC_TIME`, `LANG`, and
+then the operating system's own setting. If none can be used, `en_US` is used.
+The locale changes how amounts are shown, not their value: switching from `en_GB`
+to `de_DE` shows £10 as 10 €. The app's own words are in English.
+
+## Building
+
+You need Rust 1.95 or later.
 
 ```sh
 cargo build --release
 target/release/opentrack
 ```
 
-`cargo test` runs the tests. On a Mac, they also build and check an installer
-package.
+`cargo test` runs the tests. Those in `src/ui/tests.rs` drive the window the way
+a keyboard and screen reader user would, and check what screen readers are told.
+On a Mac, the tests also build and check an installer package.
+
+### Layout
+
+| Path | What it is |
+| --- | --- |
+| `src/ui/` | The window, with one file per tab, and its accessibility tests |
+| `src/package/` | Release packaging, one file per system |
+| `src/db.rs` | The SQLite database |
+| `src/locale.rs` | Finding the locale, and showing and reading dates and money |
+| `src/logger.rs` | The debug log |
+| `assets/schema/` | The database's tables for SQLite, as the app makes them, and for MariaDB |
 
 ## Making the installers
 
@@ -160,4 +208,5 @@ it are made from it, and need making again if it changes.
 
 ## Licence
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE). The Ubuntu fonts in `assets/fonts` are under the
+[Ubuntu Font Licence](assets/fonts/UFL.txt).

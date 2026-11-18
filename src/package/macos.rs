@@ -55,6 +55,8 @@ pub fn build(out_dir: &Path) -> anyhow::Result<PathBuf> {
     std::fs::write(contents.join("Info.plist"), info_plist())?;
     std::fs::write(contents.join("PkgInfo"), b"APPL????")?;
     std::fs::write(contents.join("Resources/opentrack.icns"), include_bytes!("../../assets/icon/opentrack.icns"))?;
+    // The embedded fonts' licence must travel with them.
+    std::fs::write(contents.join("Resources/fonts-UFL.txt"), include_bytes!("../../assets/fonts/UFL.txt"))?;
     std::fs::write(contents.join("Resources/LICENSE.txt"), include_bytes!("../../LICENSE"))?;
 
     // Ad hoc signature ("-" identity), with the hardened runtime on.

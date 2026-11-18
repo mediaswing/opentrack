@@ -172,7 +172,7 @@ pub fn build(out_dir: &Path) -> anyhow::Result<PathBuf> {
     }
     std::fs::create_dir_all(&work)?;
     let licence = work.join("LICENSE.txt");
-    let notices = include_bytes!("../../LICENSE").to_vec();
+    let notices = [&include_bytes!("../../LICENSE")[..], b"\r\n\r\n", include_bytes!("../../assets/fonts/UFL.txt")].concat();
     std::fs::write(&licence, &notices)?;
     let licence_rtf = work.join("LICENSE.rtf");
     std::fs::write(&licence_rtf, rtf(&String::from_utf8_lossy(&notices)))?;

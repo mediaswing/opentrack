@@ -1,3 +1,6 @@
+// Hide the console window on Windows release builds.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod db;
 mod locale;
 mod logger;
@@ -9,7 +12,7 @@ mod ui;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-/// The app's name, as the README, the app and the installers give it.
+/// The app's name, as the window, the README and the installers give it.
 pub const APP_TITLE: &str = "Open Budget Tracking";
 
 /// The executable's name, as installed and typed: `opentrack`, from the
@@ -18,100 +21,65 @@ pub const BIN_NAME: &str = env!("CARGO_CRATE_NAME");
 
 const USAGE: &str = "Open Budget Tracking
 
-A simple budget tracker with a speech-friendly text interface.
-
 Usage:
-  opentrack [--db PATH] [--locale NAME] [--log PATH]
+  opentrack                     Start the application
+  opentrack --db PATH           Start it with the database at PATH
+  opentrack --locale NAME       Start it showing dates and money for NAME, such as en_GB
+  opentrack --log PATH          Start it writing the debug log to PATH
+  opentrack --version           Print the version
+  opentrack --help              Print this help
+  opentrack --package-macos DIR Build an ad hoc signed installer package (.pkg) in DIR (macOS)
+  opentrack --package-msi DIR   Build an .msi installer in DIR (Windows; needs the WiX Toolset)";
 
-Options:
-  --db PATH       Use the SQLite database at PATH.
-  --locale NAME   Format dates and money for this locale, such as en_GB or de_DE.
-  --log PATH      Write the debug log to PATH.
-  --version       Print the version.
-  --help          Show this message.
+/// Release builds on Windows are GUI programs with no console, so `--version`
+/// and `--help` would print nothing. Attach to the console of the command prompt
+/// that started us, if there is one, so their output shows up.
+#[cfg(all(windows, not(debug_assertions)))]
+fn attach_parent_console() {
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    // SAFETY: AttachConsole takes a process id and has no other preconditions;
+    // failure (no parent console, or one already attached) is harmless.
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
 
-Packaging, used by the release workflow:
-  --package-macos DIR   Build an ad hoc signed installer package (.pkg) in DIR (macOS)
-  --package-msi DIR     Build an .msi installer in DIR (Windows; needs the WiX Toolset)
-
-Database: without --db, the OPENTRACK_DB environment variable is used if set.
-Otherwise the database is kept in your user data folder as
-opentrack/opentrack.db, and is created on first run.
-
-Locale: by default the system locale is detected. OPENTRACK_LOCALE overrides it.
-
-Debug log: written to debug.log in the same folder as the database. Set
-OPENTRACK_LOG to off, error, warn, info, debug or trace to change how much is
-recorded. The default is debug.";
-
+#[derive(Default)]
 struct Args {
     db: Option<PathBuf>,
     locale: Option<String>,
     log: Option<PathBuf>,
-    help: bool,
 }
 
-fn parse_args() -> Result<Args, String> {
-    let mut args = Args { db: None, locale: None, log: None, help: false };
-    let mut it = std::env::args().skip(1);
+fn parse_args(args: &[String]) -> Result<Args, String> {
+    let mut parsed = Args::default();
+    let mut it = args.iter();
     while let Some(arg) = it.next() {
-        let mut value = |what: &str| it.next().ok_or(format!("{arg} needs {what}."));
+        let mut value = |what: &str| it.next().cloned().ok_or(format!("{arg} needs {what}."));
         match arg.as_str() {
-            "--help" | "-h" => args.help = true,
-            "--db" => args.db = Some(value("a file path")?.into()),
-            "--locale" => args.locale = Some(value("a locale name, such as en_GB")?),
-            "--log" => args.log = Some(value("a file path")?.into()),
-            other => return Err(format!("Unknown option {other}. Use --help to see the options.")),
+            "--db" => parsed.db = Some(value("a file path")?.into()),
+            "--locale" => parsed.locale = Some(value("a locale name, such as en_GB")?),
+            "--log" => parsed.log = Some(value("a file path")?.into()),
+            other => return Err(format!("Unknown option: {other}\n\n{USAGE}")),
         }
     }
-    Ok(args)
+    Ok(parsed)
 }
 
+/// The database's usual place: `OPENTRACK_DB`, or the user's data folder.
 fn default_db_path() -> Result<PathBuf, String> {
     if let Some(p) = std::env::var_os("OPENTRACK_DB") {
         return Ok(PathBuf::from(p));
     }
     let dir = dirs::data_dir()
-        .ok_or("Could not find your user data folder. Use --db to choose a database file.")?
-        .join("opentrack");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create {}: {e}.", dir.display()))?;
+        .ok_or("Your user data folder could not be found, so nothing you add will be kept.")?
+        .join(BIN_NAME);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("The folder {} could not be made: {e}.", dir.display()))?;
     Ok(dir.join("opentrack.db"))
-}
-
-fn run() -> Result<(), String> {
-    let args = parse_args()?;
-    let db_path = match args.db {
-        Some(p) => p,
-        None => default_db_path()?,
-    };
-    let log_path = args
-        .log
-        .unwrap_or_else(|| db_path.parent().unwrap_or(Path::new("")).join("debug.log"));
-    if let Err(msg) = logger::init(&log_path) {
-        eprintln!("{msg} Continuing without a debug log.");
-    }
-    log::info!(
-        "{APP_TITLE} {} starting on {} {}",
-        env!("CARGO_PKG_VERSION"),
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    );
-
-    let fmt = locale::LocaleFormat::detect(args.locale.as_deref())?;
-    log::info!("locale {}", fmt.describe());
-
-    if args.help {
-        println!("{USAGE}\n\nCurrent locale: {}.\nDatabase: {}.\nDebug log: {}.",
-            fmt.describe(), db_path.display(), log_path.display());
-        return Ok(());
-    }
-
-    log::info!("opening database {}", db_path.display());
-    let db = db::Db::open(&db_path).map_err(|e| format!("Could not open the database at {}: {e}.", db_path.display()))?;
-    let stdin = std::io::stdin();
-    ui::Ui::new(db, fmt, stdin.lock(), std::io::stdout().lock())
-        .run()
-        .map_err(|e| format!("Input or output failed: {e}."))
 }
 
 /// Builds an installer in `dir` (default `dist`) and prints its path.
@@ -130,45 +98,136 @@ fn package(dir: Option<&String>) -> ExitCode {
     }
 }
 
-/// Opened from Finder or the Dock, the app has no terminal to talk in, so ask
-/// Terminal to run it in a new window instead, and stop. Returns false when the
-/// app already has a terminal, or isn't running from an app bundle.
-#[cfg(target_os = "macos")]
-fn reopen_in_terminal() -> bool {
-    use std::io::IsTerminal;
-    if std::io::stdin().is_terminal() || std::env::args().len() > 1 {
-        return false;
-    }
-    let Ok(exe) = std::env::current_exe() else { return false };
-    if !exe.to_string_lossy().contains(".app/Contents/MacOS/") {
-        return false;
-    }
-    std::process::Command::new("/usr/bin/open").args(["-a", "Terminal"]).arg(&exe).status().is_ok_and(|s| s.success())
-}
-
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(all(windows, not(debug_assertions)))]
+    if !args.is_empty() {
+        attach_parent_console();
+    }
     match args.first().map(String::as_str) {
         Some("--version" | "-V") => {
             println!("{APP_TITLE} {}", env!("CARGO_PKG_VERSION"));
-            return ExitCode::SUCCESS;
+            ExitCode::SUCCESS
+        }
+        Some("--help" | "-h") => {
+            println!("{USAGE}");
+            ExitCode::SUCCESS
         }
         #[cfg(target_os = "macos")]
-        Some("--package-macos") => return package(args.get(1)),
+        Some("--package-macos") => package(args.get(1)),
         #[cfg(windows)]
-        Some("--package-msi") => return package(args.get(1)),
-        _ => {}
+        Some("--package-msi") => package(args.get(1)),
+        _ => match parse_args(&args) {
+            Ok(args) => run_gui(args),
+            Err(msg) => {
+                eprintln!("{msg}");
+                ExitCode::from(2)
+            }
+        },
     }
-    #[cfg(target_os = "macos")]
-    if reopen_in_terminal() {
-        return ExitCode::SUCCESS;
+}
+
+fn run_gui(args: Args) -> ExitCode {
+    // If the database or the log can't be opened, the app still runs and the
+    // status bar says what went wrong.
+    let mut problems = Vec::new();
+    let db_path = match args.db.map_or_else(default_db_path, Ok) {
+        Ok(path) => Some(path),
+        Err(msg) => {
+            problems.push(msg);
+            None
+        }
+    };
+    let log_path = args.log.or_else(|| db_path.as_ref().map(|p| p.parent().unwrap_or(Path::new("")).join("debug.log")));
+    if let Some(path) = &log_path
+        && let Err(msg) = logger::init(path)
+    {
+        problems.push(format!("{msg} The app will run without one."));
+    }
+    log::info!("{APP_TITLE} {} starting on {} {}", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
+
+    let opened = db_path.as_ref().map(|path| {
+        log::info!("opening database {}", path.display());
+        db::Db::open(path).map_err(|e| {
+            format!("Your spending could not be opened from {}, so nothing you add will be kept: {e}.", path.display())
+        })
+    });
+    let (db, database) = match opened {
+        Some(Ok(db)) => (db, db_path),
+        failed => {
+            if let Some(Err(msg)) = failed {
+                problems.push(msg);
+            }
+            match db::Db::open_in_memory() {
+                Ok(db) => (db, None),
+                Err(e) => {
+                    eprintln!("Could not start: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+    };
+
+    // --locale wins, then the one chosen on the Settings tab, then the computer's.
+    let wanted = args.locale.or_else(|| db.setting("locale").ok().flatten());
+    let fmt = locale::LocaleFormat::detect(wanted.as_deref()).unwrap_or_else(|msg| {
+        problems.push(msg);
+        locale::LocaleFormat::detect(None).expect("detecting the computer's locale always succeeds")
+    });
+    log::info!("locale {}", fmt.describe());
+    for problem in &problems {
+        log::warn!("{problem}");
     }
 
-    let result = run();
-    if let Err(msg) = &result {
-        log::error!("{msg}");
-        eprintln!("{msg}");
-    }
+    let paths = ui::Paths { database, log: log_path };
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title(APP_TITLE)
+            .with_app_id(BIN_NAME)
+            .with_inner_size([900.0, 680.0])
+            .with_min_inner_size([560.0, 420.0]),
+        ..Default::default()
+    };
+    let result = eframe::run_native(
+        APP_TITLE,
+        options,
+        Box::new(move |cc| {
+            let dialogs = Box::new(ui::NativeDialogs);
+            Ok(Box::new(ui::App::new(&cc.egui_ctx, db, fmt, dialogs, paths, problems.join(" "))))
+        }),
+    );
+    let code = match result {
+        Ok(()) => {
+            log::info!("exited normally");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            log::error!("exited with error: {e}");
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    };
     log::logger().flush();
-    if result.is_ok() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    code
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_program_is_called_opentrack() {
+        assert_eq!(BIN_NAME, "opentrack");
+        assert!(USAGE.lines().skip(3).all(|line| line.trim_start().starts_with(BIN_NAME)), "{USAGE}");
+    }
+
+    #[test]
+    fn options_are_read() {
+        let args: Vec<String> = ["--db", "a.db", "--locale", "de_DE"].map(String::from).to_vec();
+        let parsed = parse_args(&args).unwrap();
+        assert_eq!(parsed.db.as_deref(), Some(Path::new("a.db")));
+        assert_eq!(parsed.locale.as_deref(), Some("de_DE"));
+        assert!(parse_args(&["--db".to_owned()]).is_err());
+        assert!(parse_args(&["--nope".to_owned()]).is_err());
+    }
 }

@@ -3,7 +3,7 @@ name = "opentrack"
 version = "0.1.0"
 edition = "2024"
 # The newest that any dependency needs.
-rust-version = "1.89"
+rust-version = "1.95"
 description = "Open Budget Tracking: a simple, speech-friendly budget tracker"
 license = "MIT"
 readme = "README.md"
@@ -18,6 +18,10 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "glow", "links", "wayland", "x11"] }
+# The emoji font has the icons on the tabs, whatever fonts the computer has.
+egui = { version = "0.37", features = ["monochrome_emoji_fonts"] }
+rfd = "0.17"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std", "unstable-locales"] }
 dirs = "7.0.0"
 log = { version = "0.4.35", features = ["std"] }
@@ -30,6 +34,7 @@ sys-locale = "0.3.2"
 tempfile = "3"
 
 [dev-dependencies]
+egui_kittest = "0.37"
 tempfile = "3"
 
 [build-dependencies]

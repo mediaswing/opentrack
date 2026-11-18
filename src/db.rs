@@ -1,7 +1,10 @@
-//! SQLite storage. The schema follows `MariaDB Schema.sql`, translated to
+//! SQLite storage. The schema follows `assets/schema/mariadb.sql`, translated to
 //! SQLite: `category` and `spending` keep their table and column names, the
 //! category ids still start at 22, and the same eight starter categories are
 //! added when a new database is created. `price` is stored as whole pence.
+//! A `setting` table, added in schema version 2, keeps the choices made on the
+//! Settings tab. `assets/schema/sqlite.sql` is the whole schema in one file,
+//! and a test checks that it matches what is built here.
 
 use std::path::Path;
 
@@ -21,7 +24,7 @@ CREATE TABLE IF NOT EXISTS spending (
     bucket INTEGER NOT NULL REFERENCES category (id)
 );
 CREATE INDEX IF NOT EXISTS spending_date ON spending (date);
--- Matches `AUTO_INCREMENT = 22` in the MariaDB schema.
+-- Matches `AUTO_INCREMENT = 22` in assets/schema/mariadb.sql.
 INSERT INTO sqlite_sequence (name, seq) VALUES ('category', 21);
 INSERT INTO category (short) VALUES
     ('Entertainment'),
@@ -33,6 +36,14 @@ INSERT INTO category (short) VALUES
     ('Healthcare'),
     ('Social Events');
 PRAGMA user_version = 1;
+";
+
+const SCHEMA_V2: &str = "
+CREATE TABLE IF NOT EXISTS setting (
+    name  TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+PRAGMA user_version = 2;
 ";
 
 #[derive(Debug, Clone)]
@@ -66,7 +77,8 @@ impl Db {
         Self::init(Connection::open(path)?)
     }
 
-    #[cfg(test)]
+    /// A database that is lost when the app closes, used when the real one
+    /// can't be opened, so the app still works.
     pub fn open_in_memory() -> Result<Self> {
         Self::init(Connection::open_in_memory()?)
     }
@@ -77,14 +89,37 @@ impl Db {
         // opening a new database at once don't both try to create it.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        log::debug!("database at schema version {version}");
         if version < 1 {
             log::info!("new database: creating schema version 1 and starter categories");
             tx.execute_batch(SCHEMA_V1)?;
-        } else {
-            log::debug!("existing database at schema version {version}");
+        }
+        if version < 2 {
+            log::info!("updating the database to schema version 2");
+            tx.execute_batch(SCHEMA_V2)?;
         }
         tx.commit()?;
         Ok(Self { conn })
+    }
+
+    /// A saved setting, if there is one.
+    pub fn setting(&self, name: &str) -> Result<Option<String>> {
+        self.conn
+            .query_row("SELECT value FROM setting WHERE name = ?1", params![name], |r| r.get(0))
+            .optional()
+    }
+
+    /// Saves a setting, or forgets it when `value` is `None`.
+    pub fn set_setting(&self, name: &str, value: Option<&str>) -> Result<()> {
+        match value {
+            Some(v) => self.conn.execute(
+                "INSERT INTO setting (name, value) VALUES (?1, ?2)
+                 ON CONFLICT (name) DO UPDATE SET value = excluded.value",
+                params![name, v],
+            ),
+            None => self.conn.execute("DELETE FROM setting WHERE name = ?1", params![name]),
+        }?;
+        Ok(())
     }
 
     pub fn categories(&self) -> Result<Vec<Category>> {
@@ -106,6 +141,7 @@ impl Db {
         Ok(self.conn.last_insert_rowid())
     }
 
+    #[cfg(test)]
     pub fn get_spending(&self, line: i64) -> Result<Option<Spending>> {
         self.conn
             .query_row(
@@ -215,6 +251,56 @@ mod tests {
         let db = Db::open(&path).unwrap();
         assert_eq!(db.categories().unwrap().len(), 8);
         assert_eq!(db.spending_between(d("2026-11-01"), d("2026-12-01")).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn settings_are_saved_replaced_and_forgotten() {
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(db.setting("locale").unwrap(), None);
+        db.set_setting("locale", Some("en_GB")).unwrap();
+        db.set_setting("locale", Some("de_DE")).unwrap();
+        assert_eq!(db.setting("locale").unwrap().as_deref(), Some("de_DE"));
+        db.set_setting("locale", None).unwrap();
+        assert_eq!(db.setting("locale").unwrap(), None);
+    }
+
+    #[test]
+    fn a_version_1_database_is_updated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(SCHEMA_V1).unwrap();
+        drop(conn);
+        let db = Db::open(&path).unwrap();
+        db.set_setting("appearance", Some("high_contrast")).unwrap();
+        assert_eq!(db.categories().unwrap().len(), 8, "not seeded twice");
+    }
+
+    /// Everything that defines a database: its tables, indexes, starting
+    /// categories, next category id and version.
+    fn shape(conn: &Connection) -> Vec<String> {
+        let mut rows: Vec<String> = Vec::new();
+        let mut stmt = conn.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").unwrap();
+        rows.extend(
+            stmt.query_map([], |r| {
+                Ok(format!("{} {} {}", r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?.unwrap_or_default()))
+            })
+            .unwrap()
+            .map(|r| r.unwrap()),
+        );
+        let mut stmt = conn.prepare("SELECT id, short FROM category ORDER BY id").unwrap();
+        rows.extend(stmt.query_map([], |r| Ok(format!("{} {}", r.get::<_, i64>(0)?, r.get::<_, String>(1)?))).unwrap().map(|r| r.unwrap()));
+        rows.push(conn.query_row("SELECT seq FROM sqlite_sequence WHERE name = 'category'", [], |r| r.get::<_, i64>(0)).unwrap().to_string());
+        rows.push(conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap().to_string());
+        rows
+    }
+
+    #[test]
+    fn the_sample_schema_matches_the_real_one() {
+        let sample = Connection::open_in_memory().unwrap();
+        sample.execute_batch(include_str!("../assets/schema/sqlite.sql")).unwrap();
+        let real = Db::open_in_memory().unwrap();
+        assert_eq!(shape(&sample), shape(&real.conn));
     }
 
     #[test]

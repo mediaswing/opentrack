@@ -10,7 +10,7 @@
 //! the glibc locale database bundled in the `pure-rust-locales` crate, which
 //! covers several hundred locales.
 
-use chrono::{Datelike, Locale, NaiveDate};
+use chrono::{Locale, NaiveDate};
 use pure_rust_locales::locale_match;
 
 use crate::money::{self, ParseError};
@@ -46,7 +46,7 @@ impl LocaleFormat {
     /// option; if it is given but unknown, an error is returned.
     pub fn detect(explicit: Option<&str>) -> Result<Self, String> {
         if let Some(name) = explicit {
-            return resolve(name)
+            return resolve_explicit(name)
                 .map(|l| Self::new(l, "--locale option"))
                 .ok_or_else(|| format!("Unknown locale \"{name}\". Use a name such as en_GB or de_DE."));
         }
@@ -235,14 +235,6 @@ impl LocaleFormat {
         d.format_localized("%B %Y", self.locale).to_string()
     }
 
-    /// An example month to show in prompts, in the locale's order.
-    pub fn example_month(&self, d: NaiveDate) -> String {
-        match self.date_order {
-            DateOrder::YearMonthDay => format!("{}-{:02}", d.year(), d.month()),
-            _ => format!("{}/{}", d.month(), d.year()),
-        }
-    }
-
     pub fn describe(&self) -> String {
         format!(
             "{} (from the {}): dates like {}, money like {}",
@@ -281,6 +273,18 @@ fn date_order_of(d_fmt: &str) -> (DateOrder, char) {
         _ => DateOrder::DayMonthYear,
     };
     (order, separator.unwrap_or('/'))
+}
+
+/// Turn a locale name someone typed into a known locale. Unlike `resolve`, a
+/// region that doesn't exist is a mistake to report, not a reason to guess:
+/// "de_DE" and "de-de" work, as does "de" alone, but "de_XX" doesn't.
+fn resolve_explicit(raw: &str) -> Option<Locale> {
+    let base = raw.split(['.', '@']).next()?.trim().replace('-', "_");
+    match base.split('_').collect::<Vec<_>>().as_slice() {
+        [lang] => resolve(lang),
+        [lang, region] => Locale::try_from(format!("{}_{}", lang.to_lowercase(), region.to_uppercase()).as_str()).ok(),
+        _ => resolve(&base),
+    }
 }
 
 /// Turn a locale string from the environment ("en_GB.UTF-8", "en-GB",
@@ -349,6 +353,17 @@ mod tests {
         assert_eq!(resolve("C"), None);
         assert_eq!(resolve("C.UTF-8"), None);
         assert_eq!(resolve("xx_YY"), None);
+    }
+
+    #[test]
+    fn typed_locales_must_exist() {
+        assert_eq!(resolve_explicit("de_DE"), Some(Locale::de_DE));
+        assert_eq!(resolve_explicit("de-de"), Some(Locale::de_DE));
+        assert_eq!(resolve_explicit("de"), Some(Locale::de_DE));
+        assert_eq!(resolve_explicit("en_GB.UTF-8"), Some(Locale::en_GB));
+        assert_eq!(resolve_explicit("de_DEx"), None);
+        assert_eq!(resolve_explicit("de_XX"), None);
+        assert!(LocaleFormat::detect(Some("de_XX")).is_err());
     }
 
     #[test]
