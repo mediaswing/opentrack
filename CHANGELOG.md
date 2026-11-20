@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-11-20
 
 - **A new Import/Export tab.** Spending can be imported from CSV or JSON
   files, and exported as CSV, JSON, or a PDF or Word report. A file is checked
