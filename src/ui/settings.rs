@@ -1,4 +1,4 @@
-//! The Settings tab. Everything here is stored in the database as soon as it
+//! The System Settings tab. Everything here is stored in the database as soon as it
 //! is changed.
 
 use chrono::NaiveDate;
@@ -10,7 +10,7 @@ use crate::locale::LocaleFormat;
 
 impl App {
     pub(super) fn settings_tab(&mut self, ui: &mut Ui) {
-        heading(ui, "Settings", 2);
+        heading(ui, "System Settings", 2);
 
         heading(ui, "Appearance", 3);
         let names: Vec<String> = Appearance::ALL.iter().map(|a| format!("{}: {}", a.label(), a.description())).collect();

@@ -39,9 +39,40 @@ pub fn parse_canonical(input: &str) -> Result<i64, ParseError> {
     Ok(if negative { -value } else { value })
 }
 
+/// An amount as a plain number with two decimal places, such as `12.50` or
+/// `-3.99`, whatever the locale: the form used in exported files.
+pub fn canonical(hundredths: i64) -> String {
+    let sign = if hundredths < 0 { "-" } else { "" };
+    let abs = hundredths.unsigned_abs();
+    format!("{sign}{}.{:02}", abs / 100, abs % 100)
+}
+
+/// `part`'s share of `total`, as a whole percentage rounded to the nearest.
+/// There is none when the total isn't positive or the part is negative, as
+/// with refunds, since a share of those would mislead.
+pub fn share_percent(part: i64, total: i64) -> Option<i64> {
+    (total > 0 && part >= 0).then(|| (part * 100 + total / 2) / total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_round_trips() {
+        for (pence, text) in [(1250, "12.50"), (-399, "-3.99"), (5, "0.05"), (0, "0.00"), (MAX_HUNDREDTHS, "999999.99")] {
+            assert_eq!(canonical(pence), text);
+            assert_eq!(parse_canonical(text), Ok(pence));
+        }
+    }
+
+    #[test]
+    fn shares() {
+        assert_eq!(share_percent(1250, 2150), Some(58));
+        assert_eq!(share_percent(900, 2150), Some(42));
+        assert_eq!(share_percent(-100, 2150), None);
+        assert_eq!(share_percent(100, 0), None);
+    }
 
     #[test]
     fn parses_canonical_forms() {

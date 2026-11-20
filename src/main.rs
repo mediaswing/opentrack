@@ -5,6 +5,8 @@ mod db;
 mod locale;
 mod logger;
 mod money;
+mod report;
+mod transfer;
 #[cfg(any(target_os = "macos", windows))]
 mod package;
 mod ui;
@@ -169,7 +171,7 @@ fn run_gui(args: Args) -> ExitCode {
         }
     };
 
-    // --locale wins, then the one chosen on the Settings tab, then the computer's.
+    // --locale wins, then the one chosen on the System Settings tab, then the computer's.
     let wanted = args.locale.or_else(|| db.setting("locale").ok().flatten());
     let fmt = locale::LocaleFormat::detect(wanted.as_deref()).unwrap_or_else(|msg| {
         problems.push(msg);

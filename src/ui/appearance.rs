@@ -4,7 +4,7 @@
 use egui::style::{Selection, WidgetVisuals};
 use egui::{Color32, FontData, FontDefinitions, FontFamily, Stroke, Theme, Visuals};
 
-/// How the window looks, chosen on the Settings tab.
+/// How the window looks, chosen on the System Settings tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Appearance {
     #[default]

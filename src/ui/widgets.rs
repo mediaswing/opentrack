@@ -179,11 +179,57 @@ fn text_area_inner(ui: &mut Ui, label: &str, value: &str) -> Response {
 /// Enter or Alt+Down (Option+Down on a Mac) opens the list, and Alt+Up or Escape
 /// closes it. Returns whether the choice changed, and the dropdown itself.
 pub fn dropdown(ui: &mut Ui, salt: &str, label: &str, options: &[String], selected: &mut usize) -> (bool, Response) {
-    let label_resp = ui.label(label);
+    let label = ui.label(label);
+    let width = ui.available_width();
+    combo_box(ui, salt, label.id, options, selected, width)
+}
+
+/// A labelled dropdown with a button beside it, on one line, such as a choice
+/// and the button that acts on it. The label goes above both, and Tab moves
+/// from the dropdown to the button. If there isn't room for the dropdown's
+/// longest choice beside the button, as in a narrow window or with very large
+/// text, the button goes on the line below instead, filling it. Returns
+/// whether the choice changed, the dropdown, and the button.
+pub fn dropdown_and_button(
+    ui: &mut Ui,
+    salt: &str,
+    label: &str,
+    options: &[String],
+    selected: &mut usize,
+    button: (&str, &str, Option<&KeyboardShortcut>),
+) -> (bool, Response, Response) {
+    let (button_salt, button_text, shortcut) = button;
+    stable_scope(ui, salt, |ui| {
+        let label = ui.label(label);
+        let font = egui::TextStyle::Button.resolve(ui.style());
+        let text_width = |ui: &Ui, text: &str| ui.fonts_mut(|f| f.layout_no_wrap(text.to_owned(), font.clone(), Color32::PLACEHOLDER).size().x);
+        let padding = ui.spacing().button_padding.x;
+        let gap = ui.spacing().item_spacing.x;
+        let button_width = text_width(ui, button_text) + 2.0 * padding + 16.0;
+        // The longest choice, the list's arrow, and room to breathe.
+        let combo_needs = options.iter().map(|o| text_width(ui, o)).fold(0.0, f32::max) + 2.0 * padding + 40.0;
+        let combo_width = ui.available_width() - button_width - gap;
+        if combo_width < combo_needs {
+            let width = ui.available_width();
+            let (changed, combo) = combo_box(ui, "dropdown", label.id, options, selected, width);
+            let pressed = full_button(ui, button_salt, button_text, shortcut);
+            return (changed, combo, pressed);
+        }
+        ui.horizontal(|ui| {
+            let (changed, combo) = combo_box(ui, "dropdown", label.id, options, selected, combo_width);
+            let pressed = full_button(ui, button_salt, button_text, shortcut);
+            (changed, combo, pressed)
+        })
+        .inner
+    })
+}
+
+/// The dropdown itself, `width` wide, named by the label `label`.
+fn combo_box(ui: &mut Ui, salt: &str, label: egui::Id, options: &[String], selected: &mut usize, width: f32) -> (bool, Response) {
     let mut changed = false;
     let current = options.get(*selected).cloned().unwrap_or_default();
     let combo = egui::ComboBox::from_id_salt(salt)
-        .width(ui.available_width())
+        .width(width)
         .height(400.0)
         .selected_text(current)
         .show_ui(ui, |ui| {
@@ -195,7 +241,7 @@ pub fn dropdown(ui: &mut Ui, salt: &str, label: &str, options: &[String], select
                 }
             }
         });
-    let resp = combo.response.labelled_by(label_resp.id);
+    let resp = combo.response.labelled_by(label);
     let popup_open = combo.inner.is_some();
     // Where egui keeps whether this dropdown's list is open.
     let popup_id = resp.id.with("popup");

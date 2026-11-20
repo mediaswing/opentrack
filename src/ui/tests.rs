@@ -3,6 +3,7 @@
 //! screen readers. Nothing here uses the pointer.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use chrono::{Datelike, Locale, Months};
@@ -17,6 +18,8 @@ use super::*;
 #[derive(Clone, Default)]
 struct Script {
     confirm: Rc<RefCell<bool>>,
+    /// The file chosen in an open or save dialog; none is cancelling.
+    file: Rc<RefCell<Option<PathBuf>>>,
     asked: Rc<RefCell<Vec<String>>>,
 }
 
@@ -24,6 +27,16 @@ impl Dialogs for Script {
     fn confirm(&self, title: &str, question: &str) -> bool {
         self.asked.borrow_mut().push(format!("{title}: {question}"));
         *self.confirm.borrow()
+    }
+
+    fn open_file(&self, title: &str, kind: &str, extensions: &[&str]) -> Option<PathBuf> {
+        self.asked.borrow_mut().push(format!("{title}: {kind} {extensions:?}"));
+        self.file.borrow().clone()
+    }
+
+    fn save_file(&self, title: &str, name: &str, kind: &str, extensions: &[&str]) -> Option<PathBuf> {
+        self.asked.borrow_mut().push(format!("{title}: {name} {kind} {extensions:?}"));
+        self.file.borrow().clone()
     }
 }
 
@@ -164,21 +177,29 @@ fn add_tea(h: &mut Window) {
 }
 
 #[test]
-fn the_keyboard_reaches_every_control_on_add_spending_in_order() {
-    let (mut h, _) = window();
-    assert_eq!(focused(&h).as_deref(), Some("Add Spending"), "the focus starts somewhere");
+fn the_keyboard_reaches_every_control_on_spending_in_order() {
+    let db = Db::open_in_memory().unwrap();
+    db.add_spending("Cinema", today(), 1250, 22).unwrap();
+    let (mut h, _) = open(db);
+    assert_eq!(focused(&h).as_deref(), Some("Spending"), "the focus starts on the Spending tab");
     let stops = tab_stops(&mut h, Modifiers::NONE);
     let expected = [
-        "Spending",
-        "Summary",
         "Categories",
-        "Settings",
+        "Import/Export",
+        "System Settings",
         "What you bought",
         "Amount, for example 12.50",
         "Date, such as",
         "Category",
         "Save spending",
-        "Add Spending",
+        "Previous month",
+        "This month",
+        "Next month",
+        "Spending in",
+        "Entry to delete",
+        "Delete this entry",
+        "Summary",
+        "Spending",
     ];
     assert_eq!(stops.len(), expected.len(), "{stops:?}");
     for (stop, wanted) in stops.iter().zip(expected) {
@@ -191,9 +212,10 @@ fn the_keyboard_reaches_every_control_on_add_spending_in_order() {
 fn tabs_are_tabs_and_say_which_is_selected() {
     let (mut h, _) = window();
     let tabs: Vec<_> = h.root().children_recursive().filter(|n| n.accesskit_node().role() == Role::Tab).collect();
-    assert_eq!(tabs.len(), 5);
-    assert!(node_by_label(&h, "Add Spending").accesskit_node().is_selected().unwrap());
-    command(&mut h, Key::Num3);
+    let names: Vec<String> = tabs.iter().map(|t| t.accesskit_node().label().unwrap()).collect();
+    assert_eq!(names, ["Summary", "Spending", "Categories", "Import/Export", "System Settings"]);
+    assert!(tabs[1].accesskit_node().is_selected().unwrap());
+    command(&mut h, Key::Num1);
     assert_eq!(app(&h).tab, Tab::Summary);
     assert_eq!(focused(&h).as_deref(), Some("Summary"), "the focus goes to the tab");
     assert!(node_by_label(&h, "Summary").accesskit_node().is_selected().unwrap());
@@ -216,8 +238,7 @@ fn spending_is_added_from_the_keyboard() {
     assert_eq!(app(&h).name_input, "");
     assert_eq!(app(&h).amount_input, "");
     assert_eq!(focused(&h).as_deref(), Some("What you bought"));
-    // And it is in this month's list.
-    command(&mut h, Key::Num2);
+    // And it is in this month's list, on the same tab.
     assert!(node_by_label(&h, "Spending in").accesskit_node().value().unwrap().contains("Entry 1: Tea, £2.50"));
 }
 
@@ -283,7 +304,7 @@ fn months_can_be_changed_and_are_announced() {
     press_with(&mut h, Modifiers::COMMAND, Key::PageDown);
     assert_eq!(app(&h).month, this);
     // The Summary tab shows the same month.
-    command(&mut h, Key::Num3);
+    command(&mut h, Key::Num1);
     command(&mut h, Key::PageUp);
     assert_eq!(app(&h).month, previous);
     focus_on(&mut h, "This month");
@@ -298,6 +319,30 @@ fn the_month_buttons_share_a_line() {
     let rects: Vec<_> =
         ["Previous month", "This month", "Next month"].iter().map(|l| node_by_label(&h, l).rect()).collect();
     assert!(rects.iter().all(|r| (r.top() - rects[0].top()).abs() < 1.0), "{rects:?}");
+}
+
+#[test]
+fn save_spending_is_beside_the_category() {
+    let (h, _) = window();
+    let category = node_by_label(&h, "Category").rect();
+    let save = node_by_label(&h, "Save spending").rect();
+    assert!((category.top() - save.top()).abs() < 1.0, "{category:?} {save:?}");
+    assert!(save.left() > category.right(), "the button is to the right");
+    assert_eq!(node_by_label(&h, "Category").accesskit_node().role(), Role::ComboBox, "still named by its label");
+}
+
+#[test]
+fn in_a_narrow_window_save_spending_goes_below_the_category() {
+    let (mut h, _) = window();
+    // Text this large leaves no room beside the longest category.
+    h.ctx.set_zoom_factor(3.0);
+    h.run_steps(3);
+    let category = node_by_label(&h, "Category").rect();
+    let save = node_by_label(&h, "Save spending").rect();
+    assert!(save.top() >= category.bottom(), "{category:?} {save:?}");
+    focus_on(&mut h, "Category");
+    press(&mut h, Key::Tab);
+    assert_eq!(focused(&h).as_deref(), Some("Save spending"));
 }
 
 #[test]
@@ -334,7 +379,7 @@ fn the_summary_gives_each_category_with_its_share() {
     db.add_spending("Cinema", today(), 1250, 22).unwrap();
     db.add_spending("Pizza", today(), 900, 23).unwrap();
     let (mut h, _) = open(db);
-    command(&mut h, Key::Num3);
+    command(&mut h, Key::Num1);
     let text = node_by_label(&h, "by category").accesskit_node().value().unwrap();
     assert_eq!(
         text,
@@ -349,10 +394,10 @@ fn the_summary_gives_each_category_with_its_share() {
 #[test]
 fn a_category_is_added_and_can_be_chosen() {
     let (mut h, _) = window();
-    command(&mut h, Key::Num4);
+    command(&mut h, Key::Num3);
     fill(&mut h, "Name of the new category", "Gifts");
     press(&mut h, Key::Enter);
-    assert_eq!(status(&h), "Added the category Gifts. You can choose it on the Add Spending tab.");
+    assert_eq!(status(&h), "Added the category Gifts. You can choose it on the Spending tab.");
     assert_eq!(focused(&h).as_deref(), Some("Name of the new category, up to 32 characters"));
     assert!(node_by_label(&h, "Categories, one on each line").accesskit_node().value().unwrap().ends_with("Gifts"));
 
@@ -361,7 +406,7 @@ fn a_category_is_added_and_can_be_chosen() {
     assert_eq!(status(&h), "There is already a category called gifts.");
     assert_eq!(status_live(&h), Live::Assertive);
 
-    command(&mut h, Key::Num1);
+    command(&mut h, Key::Num2);
     focus_on(&mut h, "Category");
     press(&mut h, Key::End);
     assert_eq!(app(&h).categories[app(&h).category_index].short, "Gifts");
@@ -388,8 +433,8 @@ fn the_locale_is_changed_and_remembered() {
     assert_eq!(status(&h), "Using the de_DE locale. Dates look like 18.11.2026, and money like 1.234,56 €.");
     assert_eq!(app(&h).db.setting("locale").unwrap().as_deref(), Some("de_DE"));
     assert!(focused(&h).unwrap().starts_with("Locale"), "Enter keeps the focus in the box");
-    command(&mut h, Key::Num1);
-    assert!(has_label(&h, "Amount, for example 12,50"), "the Add Spending tab follows it");
+    command(&mut h, Key::Num2);
+    assert!(has_label(&h, "Amount, for example 12,50"), "the Spending tab follows it");
 
     command(&mut h, Key::Num5);
     focus_on(&mut h, "Locale");
@@ -415,9 +460,9 @@ fn f1_shows_the_shortcuts_and_puts_the_focus_back() {
 #[test]
 fn ctrl_n_goes_to_the_first_box() {
     let (mut h, _) = window();
-    command(&mut h, Key::Num4);
+    command(&mut h, Key::Num3);
     command(&mut h, Key::N);
-    assert_eq!(app(&h).tab, Tab::Add);
+    assert_eq!(app(&h).tab, Tab::Spending);
     assert_eq!(focused(&h).as_deref(), Some("What you bought"));
 }
 
@@ -482,6 +527,143 @@ fn adding_more_spending_keeps_the_list_up_to_date() {
     assert_eq!(app(&h).entries.len(), 2);
 }
 
+// ----- import and export -----------------------------------------------------
+
+/// Chooses an export format and what to export, then presses Export.
+fn export(h: &mut Window, scope_downs: usize, format_downs: usize) {
+    command(h, Key::Num4);
+    focus_on(h, "What to export");
+    press(h, Key::Home);
+    for _ in 0..scope_downs {
+        press(h, Key::ArrowDown);
+    }
+    focus_on(h, "Format");
+    press(h, Key::Home);
+    for _ in 0..format_downs {
+        press(h, Key::ArrowDown);
+    }
+    focus_on(h, "Export to a file");
+    press(h, Key::Space);
+}
+
+#[test]
+fn the_keyboard_reaches_every_control_on_import_export() {
+    let (mut h, _) = window();
+    command(&mut h, Key::Num4);
+    assert_eq!(focused(&h).as_deref(), Some("Import/Export"));
+    let stops = tab_stops(&mut h, Modifiers::NONE);
+    let expected =
+        ["System Settings", "Import from a file", "What to export", "Format", "Export to a file", "Summary", "Spending", "Categories", "Import/Export"];
+    assert_eq!(stops, expected);
+    h.check_accessibility();
+}
+
+#[test]
+fn spending_is_exported_in_each_format_and_imported_back() {
+    let db = Db::open_in_memory().unwrap();
+    db.add_spending("Cinema", today(), 1250, 22).unwrap();
+    db.add_spending("Old tea", today() - Months::new(2), 250, 23).unwrap();
+    db.add_category("Unused").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, script) = open(db);
+    *script.confirm.borrow_mut() = true;
+
+    for (format, name) in [(0, "all.csv"), (1, "all.json"), (2, "all.pdf"), (3, "all")] {
+        *script.file.borrow_mut() = Some(dir.path().join(name));
+        export(&mut h, 0, format);
+        let said = status(&h);
+        assert!(said.starts_with("Exported 2 entries to "), "{said}");
+        assert_eq!(status_live(&h), Live::Polite);
+    }
+    let asked = script.asked.borrow().clone();
+    let all = format!("opentrack-spending-all-{}.csv", today().format("%Y-%m-%d"));
+    assert!(asked[0].starts_with(&format!("Export spending: {all} CSV files [\"csv\"]")), "{asked:?}");
+    assert!(asked[2].contains("opentrack-report-all-"), "{asked:?}");
+    // The extension is added if the name has none.
+    assert!(dir.path().join("all.docx").is_file());
+    assert!(std::fs::read(dir.path().join("all.pdf")).unwrap().starts_with(b"%PDF-"));
+    assert!(std::fs::read_to_string(dir.path().join("all.csv")).unwrap().contains(",Cinema,12.50,Entertainment"));
+
+    // Only the month on show.
+    *script.file.borrow_mut() = Some(dir.path().join("month.csv"));
+    export(&mut h, 1, 0);
+    assert!(status(&h).starts_with("Exported 1 entry to month.csv in "), "{}", status(&h));
+
+    // Cancelling saves nothing.
+    *script.file.borrow_mut() = None;
+    export(&mut h, 0, 0);
+    assert_eq!(status(&h), "Nothing was exported.");
+
+    // Into a new database: the JSON brings the unused category too.
+    let (mut h, script) = window();
+    *script.file.borrow_mut() = Some(dir.path().join("all.json"));
+    command(&mut h, Key::Num4);
+    focus_on(&mut h, "Import from a file");
+    press(&mut h, Key::Space);
+    let question = script.asked.borrow().last().unwrap().clone();
+    assert!(question.starts_with("Import spending: Import 2 entries from all.json, dated "), "{question}");
+    assert!(question.ends_with(", totalling £15.00? This also adds the category Unused."), "{question}");
+    assert_eq!(status(&h), "Nothing was imported.", "no answer is no");
+    assert!(app(&h).db.all_spending().unwrap().is_empty());
+
+    *script.confirm.borrow_mut() = true;
+    press(&mut h, Key::Space);
+    assert_eq!(status(&h), "Imported 2 entries from all.json. Added 1 category: Unused.");
+    assert_eq!(focused(&h).as_deref(), Some("Import from a file"), "the focus stays put");
+    assert_eq!(app(&h).entries.len(), 1, "this month's list is up to date");
+    assert!(app(&h).categories.iter().any(|c| c.short == "Unused"));
+
+    // The same again, as CSV, adds the entries a second time; nothing is new.
+    *script.file.borrow_mut() = Some(dir.path().join("all.csv"));
+    press(&mut h, Key::Space);
+    assert_eq!(status(&h), "Imported 2 entries from all.csv.");
+    assert_eq!(app(&h).db.all_spending().unwrap().len(), 4);
+}
+
+#[test]
+fn a_file_with_a_problem_imports_nothing_and_says_where() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("bank.csv");
+    std::fs::write(&path, "Date,Name,Amount,Category\n2026-11-18,Tea,2.50,Food\n2026-11-19,Cake,lots,Food\n").unwrap();
+    let (mut h, script) = window();
+    *script.confirm.borrow_mut() = true;
+    *script.file.borrow_mut() = Some(path);
+    command(&mut h, Key::Num4);
+    focus_on(&mut h, "Import from a file");
+    press(&mut h, Key::Space);
+    assert_eq!(
+        status(&h),
+        "Nothing was imported from bank.csv. Line 3 has an amount, \"lots\", that isn't a number such as 12.50."
+    );
+    assert_eq!(status_live(&h), Live::Assertive);
+    assert!(app(&h).db.all_spending().unwrap().is_empty());
+    assert_eq!(script.asked.borrow().len(), 1, "nothing is asked about a file with a problem");
+
+    *script.file.borrow_mut() = Some(dir.path().join("notes.pdf"));
+    press(&mut h, Key::Space);
+    assert!(status(&h).contains("notes.pdf isn't a CSV or JSON file"), "{}", status(&h));
+    *script.file.borrow_mut() = Some(dir.path().join("missing.csv"));
+    press(&mut h, Key::Space);
+    assert!(status(&h).starts_with("Nothing was imported from missing.csv. "), "{}", status(&h));
+}
+
+#[test]
+fn exporting_nothing_says_so() {
+    let (mut h, script) = window();
+    export(&mut h, 0, 2);
+    assert_eq!(status(&h), "There is no spending recorded, so there is nothing to export.");
+    assert_eq!(status_live(&h), Live::Assertive);
+    assert!(script.asked.borrow().is_empty(), "no dialog opens");
+}
+
+#[test]
+fn the_log_does_not_record_what_was_bought() {
+    // The status bar says what was bought and for how much; the log mustn't.
+    let source = include_str!("mod.rs");
+    let announce = &source[source.find("fn announce").unwrap()..];
+    let announce = &announce[..announce.find("\n    }").unwrap()];
+    assert!(!announce.contains("{text}"), "{announce}");
+}
 
 // ----- update checks ---------------------------------------------------------
 // None of these reach GitHub: they hand the window the answer a check would give.
@@ -515,7 +697,7 @@ fn a_new_version_found_at_startup_offers_the_download_page() {
     let (mut h, script) = window();
     assert_eq!(update_arrives(&mut h, Ok(Some(version_999())), false), None, "no opens nothing");
     assert_eq!(script.asked.borrow().len(), 1);
-    assert!(status(&h).contains("Settings tab has a link"), "the news is still in the status bar: {}", status(&h));
+    assert!(status(&h).contains("System Settings tab has a link"), "the news is still in the status bar: {}", status(&h));
     assert_eq!(status_live(&h), Live::Polite, "news, not an error");
 }
 

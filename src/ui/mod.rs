@@ -16,6 +16,7 @@
 mod add;
 mod appearance;
 mod categories;
+mod import_export;
 mod months;
 mod settings;
 mod shortcuts;
@@ -24,7 +25,7 @@ mod tests;
 mod updates;
 mod widgets;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use chrono::{Datelike, Local, NaiveDate};
@@ -38,34 +39,34 @@ use crate::locale::LocaleFormat;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tab {
-    Add,
-    Spending,
     Summary,
+    Spending,
     Categories,
+    ImportExport,
     Settings,
 }
 
 impl Tab {
-    const ALL: [Tab; 5] = [Tab::Add, Tab::Spending, Tab::Summary, Tab::Categories, Tab::Settings];
+    const ALL: [Tab; 5] = [Tab::Summary, Tab::Spending, Tab::Categories, Tab::ImportExport, Tab::Settings];
 
     fn name(self) -> &'static str {
         match self {
-            Tab::Add => "Add Spending",
-            Tab::Spending => "Spending",
             Tab::Summary => "Summary",
+            Tab::Spending => "Spending",
             Tab::Categories => "Categories",
-            Tab::Settings => "Settings",
+            Tab::ImportExport => "Import/Export",
+            Tab::Settings => "System Settings",
         }
     }
 
     /// With an icon, as on the window. Screen readers get `name` instead.
     fn label(self) -> &'static str {
         match self {
-            Tab::Add => "➕  Add Spending",
-            Tab::Spending => "☰  Spending",
             Tab::Summary => "📊  Summary",
+            Tab::Spending => "➕  Spending",
             Tab::Categories => "🏷  Categories",
-            Tab::Settings => "⚙  Settings",
+            Tab::ImportExport => "⬍  Import/Export",
+            Tab::Settings => "⚙  System Settings",
         }
     }
 }
@@ -73,6 +74,10 @@ impl Tab {
 /// The native dialogs, behind a trait so the tests can stand in for them.
 pub trait Dialogs {
     fn confirm(&self, title: &str, question: &str) -> bool;
+    /// Asks which file to open, of those whose names end in one of `extensions`.
+    fn open_file(&self, title: &str, kind: &str, extensions: &[&str]) -> Option<PathBuf>;
+    /// Asks where to save a file, suggesting `name`.
+    fn save_file(&self, title: &str, name: &str, kind: &str, extensions: &[&str]) -> Option<PathBuf>;
 }
 
 /// The operating system's own dialogs, which screen readers already know.
@@ -87,9 +92,35 @@ impl Dialogs for NativeDialogs {
             .show()
             == rfd::MessageDialogResult::Yes
     }
+
+    fn open_file(&self, title: &str, kind: &str, extensions: &[&str]) -> Option<PathBuf> {
+        file_dialog(title, kind, extensions).pick_file()
+    }
+
+    fn save_file(&self, title: &str, name: &str, kind: &str, extensions: &[&str]) -> Option<PathBuf> {
+        file_dialog(title, kind, extensions).set_file_name(name).save_file()
+    }
 }
 
-/// Where the app keeps things, for the Settings tab to tell people.
+/// A file dialog that starts in the Documents folder.
+fn file_dialog(title: &str, kind: &str, extensions: &[&str]) -> rfd::FileDialog {
+    let dialog = rfd::FileDialog::new().set_title(title).add_filter(kind, extensions);
+    match dirs::document_dir().or_else(dirs::home_dir) {
+        Some(dir) => dialog.set_directory(dir),
+        None => dialog,
+    }
+}
+
+/// "report.pdf in /Users/me/Documents", for the status bar.
+fn file_and_folder(path: &Path) -> String {
+    let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+    match path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        Some(folder) => format!("{name} in {}", folder.display()),
+        None => name,
+    }
+}
+
+/// Where the app keeps things, for the System Settings tab to tell people.
 #[derive(Debug, Clone, Default)]
 pub struct Paths {
     /// `None` when the database couldn't be opened and nothing will be kept.
@@ -123,7 +154,7 @@ pub struct App {
     /// Every category, oldest first.
     categories: Vec<Category>,
 
-    // Add Spending
+    // Spending: adding it
     name_input: String,
     amount_input: String,
     date_input: String,
@@ -139,7 +170,13 @@ pub struct App {
     // Categories
     new_category: String,
 
-    // Settings
+    // Import/Export
+    /// All spending, or the month on show.
+    export_scope: usize,
+    /// One of `import_export::ExportFormat::ALL`.
+    export_format: usize,
+
+    // System Settings
     locale_input: String,
     /// Whether to ask GitHub for the latest version when the app starts.
     check_updates: bool,
@@ -190,9 +227,10 @@ impl App {
             fmt,
             dialogs,
             paths,
-            tab: Tab::Add,
+            // Where spending is added, the most used.
+            tab: Tab::Spending,
             status: Status { text: "Ready.".to_owned(), error: false },
-            focus_wanted: Some(Tab::Add.name()),
+            focus_wanted: Some(Tab::Spending.name()),
             escape_pressed: false,
             shortcuts_open: false,
             focus_before_shortcuts: None,
@@ -207,6 +245,8 @@ impl App {
             totals: Vec::new(),
             entry_to_delete: 0,
             new_category: String::new(),
+            export_scope: 0,
+            export_format: 0,
             locale_input,
             check_updates,
             newer_version: None,
@@ -248,7 +288,8 @@ impl App {
     /// ignore a live region whose text hasn't changed, so a repeated message
     /// gets a no-break space added to make it differ.
     fn announce(&mut self, text: String, error: bool) {
-        log::debug!("status: {text}");
+        // Not the words, which can say what was bought and for how much.
+        log::debug!("status: {}", if error { "a problem" } else { "a message" });
         let mut text = text;
         if text == self.status.text.trim_end_matches('\u{a0}') && !self.status.text.ends_with('\u{a0}') {
             text.push('\u{a0}');
@@ -365,10 +406,10 @@ impl App {
                 ui.spacing_mut().item_spacing.y = 8.0;
                 match self.tab {
                     _ if self.shortcuts_open => self.shortcuts_view(ui),
-                    Tab::Add => self.add_tab(ui),
-                    Tab::Spending => self.spending_tab(ui),
                     Tab::Summary => self.summary_tab(ui),
+                    Tab::Spending => self.spending_tab(ui),
                     Tab::Categories => self.categories_tab(ui),
+                    Tab::ImportExport => self.import_export_tab(ui),
                     Tab::Settings => self.settings_tab(ui),
                 }
             });

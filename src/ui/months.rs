@@ -1,5 +1,6 @@
 //! The Spending and Summary tabs, which show the same month: every entry in it,
-//! or its totals by category. Moving to another month on one moves the other.
+//! below the boxes for adding spending, or its totals by category. Moving to
+//! another month on one moves the other.
 
 use chrono::{Datelike, Months};
 use egui::Ui;
@@ -66,6 +67,7 @@ impl App {
 
     pub(super) fn spending_tab(&mut self, ui: &mut Ui) {
         heading(ui, "Spending", 2);
+        self.add_section(ui);
         self.month_controls(ui);
         if self.entries.is_empty() {
             return;
@@ -124,11 +126,8 @@ impl App {
             .totals
             .iter()
             .map(|t| {
-                let share = if total > 0 && t.pence >= 0 {
-                    format!(", {} percent of the total", (t.pence * 100 + total / 2) / total)
-                } else {
-                    String::new()
-                };
+                let share = crate::money::share_percent(t.pence, total)
+                    .map_or_else(String::new, |p| format!(", {p} percent of the total"));
                 format!("{}: {}, from {}{share}.", t.category, self.fmt.money(t.pence), plural(t.count as usize, "entry", "entries"))
             })
             .collect();

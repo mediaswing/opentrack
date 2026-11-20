@@ -10,7 +10,7 @@
 //! the glibc locale database bundled in the `pure-rust-locales` crate, which
 //! covers several hundred locales.
 
-use chrono::{Locale, NaiveDate};
+use chrono::{Datelike, Duration, Locale, NaiveDate};
 use pure_rust_locales::locale_match;
 
 use crate::money::{self, ParseError};
@@ -80,7 +80,7 @@ impl LocaleFormat {
         let decimal = locale_match!(locale => LC_MONETARY::MON_DECIMAL_POINT);
         let d_fmt = locale_match!(locale => LC_TIME::D_FMT);
         let (date_order, separator) = date_order_of(d_fmt);
-        let short_date_fmt = d_fmt.replace("%y", "%Y").replace("%e", "%d");
+        let short_date_fmt = numeric_date_format(d_fmt, date_order);
         let long_date_fmt = match (date_order, separator) {
             (DateOrder::DayMonthYear, '.') => "%A, %-d. %B %Y".to_string(),
             (DateOrder::DayMonthYear, _) => "%A %-d %B %Y".to_string(),
@@ -204,6 +204,15 @@ impl LocaleFormat {
             .filter(|c| *c != other && !self.thousands.contains(*c) || *c == decimal)
             .map(|c| if c == decimal { '.' } else { c })
             .collect();
+        // Currencies with three decimal places show amounts such as 12.500,
+        // as the example in the Amount box does, but only hundredths are
+        // kept, so a final zero can go.
+        let canonical = match canonical.split_once('.') {
+            Some((whole, frac)) if self.frac_digits > 2 && frac.len() == 3 && frac.ends_with('0') => {
+                format!("{whole}.{}", &frac[..2])
+            }
+            _ => canonical,
+        };
         let canonical = if negative { format!("-{canonical}") } else { canonical };
         money::parse_canonical(&canonical).map_err(|e| match e {
             ParseError::NotANumber => format!(
@@ -273,6 +282,66 @@ fn date_order_of(d_fmt: &str) -> (DateOrder, char) {
         _ => DateOrder::DayMonthYear,
     };
     (order, separator.unwrap_or('/'))
+}
+
+/// Parse a typed date. Numbers may be separated by any non-digit character. A
+/// four-digit first number means year first; otherwise the locale's order is
+/// used. A missing year means the current year, and empty means today.
+pub fn parse_date(text: &str, today: NaiveDate, order: DateOrder) -> Result<NaiveDate, ()> {
+    let t = text.trim().to_lowercase();
+    match t.as_str() {
+        "" | "today" => return Ok(today),
+        "yesterday" => return Ok(today - Duration::days(1)),
+        _ => {}
+    }
+    // Words such as "soon" are not dates; non-Latin date markers (年, 月) are fine.
+    if t.chars().any(|c| c.is_ascii_alphabetic()) {
+        return Err(());
+    }
+    let parts: Vec<&str> = t.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty()).collect();
+    // Anything longer than four digits can't be part of a date.
+    if parts.iter().any(|p| p.len() > 4) {
+        return Err(());
+    }
+    let nums: Vec<i32> = parts.iter().map(|p| p.parse().map_err(|_| ())).collect::<Result<_, _>>()?;
+    let year = |y: i32, digits: usize| if digits <= 2 { 2000 + y } else { y };
+    let (y, m, d) = match (nums.as_slice(), order) {
+        ([y, m, d], _) if parts[0].len() == 4 => (*y, *m, *d),
+        ([a, b, c], DateOrder::YearMonthDay) => (year(*a, parts[0].len()), *b, *c),
+        ([a, b, c], DateOrder::MonthDayYear) => (year(*c, parts[2].len()), *a, *b),
+        ([a, b, c], DateOrder::DayMonthYear) => (year(*c, parts[2].len()), *b, *a),
+        ([a, b], DateOrder::DayMonthYear) => (today.year(), *b, *a),
+        ([a, b], _) => (today.year(), *a, *b),
+        _ => return Err(()),
+    };
+    let (m, d) = (u32::try_from(m).map_err(|_| ())?, u32::try_from(d).map_err(|_| ())?);
+    NaiveDate::from_ymd_opt(y, m, d).ok_or(())
+}
+
+/// The locale's short date pattern with a four-digit year, if it is made of
+/// day, month and year numbers alone. Some locales' patterns have month or
+/// weekday names, such as "%d %b, %Y", and a date typed like that couldn't be
+/// read back, so they get numbers in the same order instead. Non-Latin
+/// markers, as in "%Y年%m月%d日", are kept, since they can be typed back.
+fn numeric_date_format(d_fmt: &str, order: DateOrder) -> String {
+    let pattern = d_fmt.replace("%y", "%Y").replace("%e", "%d");
+    let mut chars = pattern.chars();
+    let mut numeric = true;
+    while let Some(c) = chars.next() {
+        match c {
+            '%' => numeric &= matches!(chars.next(), Some('d' | 'm' | 'Y')),
+            c => numeric &= !c.is_ascii_alphabetic(),
+        }
+    }
+    if numeric {
+        return pattern;
+    }
+    match order {
+        DateOrder::DayMonthYear => "%d/%m/%Y",
+        DateOrder::MonthDayYear => "%m/%d/%Y",
+        DateOrder::YearMonthDay => "%Y-%m-%d",
+    }
+    .to_owned()
 }
 
 /// Turn a locale name someone typed into a known locale. Unlike `resolve`, a
@@ -409,5 +478,53 @@ mod tests {
         assert_eq!(fmt("fr_FR").month_year(wed), "novembre 2026");
         assert_eq!(fmt("en_US").date_order, DateOrder::MonthDayYear);
         assert_eq!(fmt("sv_SE").date_order, DateOrder::YearMonthDay);
+        assert_eq!(fmt("ja_JP").short_date(wed), "2026年11月18日");
+    }
+
+    /// The date given as an example in the Date box can be typed back, in
+    /// every locale, including those whose own pattern has month names.
+    #[test]
+    fn example_dates_can_be_typed_back() {
+        let wed = d(2026, 11, 18);
+        for name in ["ar_SA", "ar_EG", "en_GB", "en_US", "de_DE", "ja_JP", "ko_KR", "eu_ES", "sv_SE", "fa_IR", "ps_AF"] {
+            let f = fmt(name);
+            let example = f.short_date(wed);
+            assert_eq!(
+                parse_date(&example, wed, f.date_order),
+                Ok(wed),
+                "{name} shows {example:?}, which must read back"
+            );
+        }
+        assert_eq!(fmt("ar_SA").short_date(wed), "18/11/2026");
+    }
+
+    /// Currencies with three decimal places accept the amount they show.
+    #[test]
+    fn three_decimal_currencies_accept_their_example() {
+        let kw = fmt("ar_KW");
+        assert_eq!(kw.example_amount().chars().filter(|c| c.is_ascii_digit()).count(), 5, "{}", kw.example_amount());
+        assert_eq!(kw.parse_money(&kw.example_amount()), Ok(1250));
+        assert!(kw.parse_money("12.345").is_err(), "only hundredths are kept");
+    }
+
+    #[test]
+    fn typed_dates() {
+        let today = d(2026, 11, 18);
+        let dmy = DateOrder::DayMonthYear;
+        let mdy = DateOrder::MonthDayYear;
+        assert_eq!(parse_date("", today, dmy), Ok(today));
+        assert_eq!(parse_date("Yesterday", today, dmy), Ok(d(2026, 11, 17)));
+        assert_eq!(parse_date("2026-01-05", today, mdy), Ok(d(2026, 1, 5)));
+        assert_eq!(parse_date("5/1/2026", today, dmy), Ok(d(2026, 1, 5)));
+        assert_eq!(parse_date("5/1/2026", today, mdy), Ok(d(2026, 5, 1)));
+        assert_eq!(parse_date("5.1.26", today, dmy), Ok(d(2026, 1, 5)));
+        assert_eq!(parse_date("5/1", today, dmy), Ok(d(2026, 1, 5)));
+        assert_eq!(parse_date("5/1", today, mdy), Ok(d(2026, 5, 1)));
+        assert_eq!(parse_date("2026年11月18日", today, DateOrder::YearMonthDay), Ok(today));
+        assert_eq!(parse_date("26-11-18", today, DateOrder::YearMonthDay), Ok(today));
+        assert!(parse_date("18/4294967297/2026", today, dmy).is_err());
+        assert!(parse_date("31/02/2026", today, dmy).is_err());
+        assert!(parse_date("soon", today, dmy).is_err());
+        assert!(parse_date("5", today, dmy).is_err());
     }
 }

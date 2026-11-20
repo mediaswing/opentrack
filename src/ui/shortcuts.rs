@@ -35,10 +35,10 @@ pub(super) fn describe(ctx: &egui::Context) -> Vec<(String, &'static str)> {
     vec![
         ("Tab, Shift+Tab".to_owned(), "Move between controls"),
         ("Space, Enter".to_owned(), "Press the control with the focus"),
-        (keys(&Tab::ALL.map(tab)), "Go to Add Spending, Spending, Summary, Categories or Settings"),
-        (keys(&[NEW]), "Add spending: go to the first box on the Add Spending tab"),
-        (keys(&[SAVE]), "Save the spending; on the Categories tab, add the category; on the Settings tab, use the locale"),
-        (keys(&[PREVIOUS_MONTH, NEXT_MONTH]), "Show the previous or next month, on the Spending and Summary tabs"),
+        (keys(&Tab::ALL.map(tab)), "Go to Summary, Spending, Categories, Import/Export or System Settings"),
+        (keys(&[NEW]), "Add spending: go to the first box on the Spending tab"),
+        (keys(&[SAVE]), "Save the spending; on the Categories tab, add the category; on the System Settings tab, use the locale"),
+        (keys(&[PREVIOUS_MONTH, NEXT_MONTH]), "Show the previous or next month, on the Summary and Spending tabs"),
         (keys(&[CLOSE]), "Close a dropdown list or the keyboard shortcuts"),
         (keys(&[SHOW_SHORTCUTS]), "Show or hide the keyboard shortcuts"),
         (keys(&[REPEAT_STATUS]), "Say the status message again"),
@@ -108,7 +108,7 @@ impl App {
             }
         }
         if ctx.input_mut(|i| i.consume_shortcut(&NEW)) {
-            self.switch_tab(Tab::Add);
+            self.switch_tab(Tab::Spending);
             self.focus_wanted = Some("name");
         }
         if ctx.input_mut(|i| i.consume_shortcut(&SAVE)) {
@@ -117,8 +117,8 @@ impl App {
                 Tab::Categories => self.add_category(),
                 Tab::Settings => self.use_locale(),
                 _ => {
-                    if self.tab != Tab::Add {
-                        self.switch_tab(Tab::Add);
+                    if self.tab != Tab::Spending {
+                        self.switch_tab(Tab::Spending);
                     }
                     self.save_spending();
                 }

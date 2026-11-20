@@ -18,6 +18,8 @@ terminal, and the name of the file that is installed.
   share of the total.
 - **Starts with eight categories**, such as Food and Drink and Transport, and
   you can add your own.
+- **Imports and exports spending** as CSV, for spreadsheets, or JSON, and makes
+  **reports** in PDF and Word format that work with screen readers.
 - **Shows dates and money the way your computer is set up**, such as
   `£1,234.56` and `18/11/2026` in the UK, or `1.234,56 €` and `18.11.2026` in
   Germany.
@@ -41,12 +43,21 @@ then **Privacy & Security**, and choose **Open Anyway**.
 ## Using it
 
 The window has five tabs down the left side, with the selected tab's controls to
-the right. Each control has a line to itself, apart from the three buttons that
-change the month, which share one, and the status bar at the bottom says what
-happened. Screen readers announce its messages without the focus moving, and a
+the right: Summary, Spending, Categories, Import/Export and System Settings. It
+opens on Spending. Each control has a line to itself, apart from the three buttons
+that change the month, which share one, and **Save spending**, which is beside
+**Category** when there is room. The status bar at the bottom says what happened. Screen readers announce its messages without the focus moving, and a
 mistake interrupts whatever is being said. Press F2 to hear the last message again.
 
-### Add Spending
+### Summary
+
+A month's spending added up by category, largest first, with each category's
+share of the total. **Previous month**, **This month** and **Next month** change
+the month, and changing it here changes it on the Spending tab too.
+
+### Spending
+
+Adding spending, then the month's entries.
 
 Type **What you bought** and the **Amount**, then choose a **Category** and press
 **Save spending**, or Enter in any of the boxes, or Ctrl+S. The status bar reads
@@ -60,26 +71,55 @@ always works, and leaving out the year means this year. Amounts can be typed wit
 or without the currency symbol and thousands separators. Both `12.50` and `12,50`
 work where they can't be mistaken for thousands.
 
-### Spending
-
-Every entry in a month, one on each line, in a box that a screen reader can go
-through line by line. **Previous month**, **This month** and **Next month** change
-the month, and the status bar says how many entries it has and what they come to.
-To delete an entry, choose it in **Entry to delete** and press **Delete this
-entry**. The app asks before deleting anything.
-
-### Summary
-
-The same month's spending added up by category, largest first, with each
-category's share of the total. Changing the month here changes it on the
-Spending tab too.
+Below that is every entry in the month, one on each line, in a box that a screen
+reader can go through line by line. **Previous month**, **This month** and **Next
+month** change the month, and the status bar says how many entries it has and
+what they come to. To delete an entry, choose it in **Entry to delete** and press
+**Delete this entry**. The app asks before deleting anything.
 
 ### Categories
 
 The categories there are, and a box to add a new one, of up to 32 characters.
-New categories can be chosen on the Add Spending tab straight away.
+New categories can be chosen on the Spending tab straight away.
 
-### Settings
+### Import/Export
+
+- **Import from a file** adds the spending in a CSV or JSON file to what is
+  already there. The whole file is checked first: if anything in it can't be
+  read, nothing is imported, and the status bar says which line has the problem.
+  Otherwise the app says how many entries the file has, their dates and total,
+  and any new categories, and asks before saving them.
+- **Export to a file** saves **All spending**, or the month on show on the
+  Summary and Spending tabs, in the **Format** chosen:
+  - **CSV**, for spreadsheets, and **JSON**, which can both be imported again.
+    JSON also keeps categories with no spending in them.
+  - **PDF** and **Word** (.docx) reports, with the total, a table of spending
+    by category (and by month, for all spending), and a table of every entry.
+    Both have real headings, and tables with header rows, so screen readers can
+    move around them, and both say which language they are in.
+
+A CSV file's first line names its columns: `Date`, `Name`, `Amount` and
+`Category`, in any order, and other columns are ignored. `Description`, `Item`
+or `Payee` will do for `Name`, and `Price` or `Cost` for `Amount`. Columns can be
+separated by commas, semicolons or tabs. Dates are best written `2026-11-18`, and
+amounts as plain numbers such as `12.50` or `-3.99`, which is how the app writes
+them, but dates in your usual order and amounts with currency symbols work too.
+Text that a spreadsheet would run as a formula, such as `=SUM(A1:A9)`, is written
+after an apostrophe, which spreadsheets hide.
+
+A JSON file is either a list of entries, or an object with a `spending` list and,
+if you like, a `categories` list:
+
+```json
+{
+  "categories": ["Food and Drink", "Gifts"],
+  "spending": [
+    { "date": "2026-11-18", "name": "Tea", "amount": "2.50", "category": "Food and Drink" }
+  ]
+}
+```
+
+### System Settings
 
 - **Colours and text**: **Standard** has light colours and medium-weight text.
   **High Contrast** has white and yellow on black, with bold text.
@@ -103,10 +143,10 @@ Fn+Down.
 | --- | --- |
 | Tab, Shift+Tab | Move between controls |
 | Space, Enter | Press the control with the focus |
-| Ctrl+1, Ctrl+2, Ctrl+3, Ctrl+4, Ctrl+5 | Go to Add Spending, Spending, Summary, Categories or Settings |
-| Ctrl+N | Add spending: go to the first box on the Add Spending tab |
-| Ctrl+S | Save the spending; on the Categories tab, add the category; on the Settings tab, use the locale |
-| Ctrl+Page Up, Ctrl+Page Down | Show the previous or next month, on the Spending and Summary tabs |
+| Ctrl+1, Ctrl+2, Ctrl+3, Ctrl+4, Ctrl+5 | Go to Summary, Spending, Categories, Import/Export or System Settings |
+| Ctrl+N | Add spending: go to the first box on the Spending tab |
+| Ctrl+S | Save the spending; on the Categories tab, add the category; on the System Settings tab, use the locale |
+| Ctrl+Page Up, Ctrl+Page Down | Show the previous or next month, on the Summary and Spending tabs |
 | Escape | Close a dropdown list or the keyboard shortcuts |
 | F1 | Show or hide the keyboard shortcuts |
 | F2 | Say the status message again |
@@ -129,6 +169,7 @@ leaves your computer, and the app doesn't send any statistics.
 | What you do | What leaves your computer |
 | --- | --- |
 | Start the app, unless update checks are turned off, or check for updates | A request to GitHub for the latest version number |
+| Import or export | Nothing: only the file you choose is read or written |
 | Anything else | Nothing |
 
 When a newer version is found as the app starts, it asks whether to open the
@@ -154,8 +195,9 @@ These change where things are kept, and the locale, for one run:
 `opentrack --help` lists them, and `opentrack --version` prints the version.
 
 The locale is the first of these that is set: `--locale`, the one chosen on the
-Settings tab, `OPENTRACK_LOCALE`, `LC_ALL`, `LC_MONETARY`, `LC_TIME`, `LANG`, and
-then the operating system's own setting. If none can be used, `en_US` is used.
+System Settings tab, `OPENTRACK_LOCALE`, `LC_ALL`, `LC_MONETARY`, `LC_TIME`,
+`LANG`, and then the operating system's own setting. If none can be used, `en_US`
+is used.
 The locale changes how amounts are shown, not their value: switching from `en_GB`
 to `de_DE` shows £10 as 10 €. The app's own words are in English.
 
@@ -179,6 +221,8 @@ On a Mac, the tests also build and check an installer package.
 | `src/ui/` | The window, with one file per tab, and its accessibility tests |
 | `src/package/` | Release packaging, one file per system |
 | `src/db.rs` | The SQLite database |
+| `src/transfer.rs` | Reading and writing CSV and JSON files |
+| `src/report/` | PDF and Word reports, and the zip writer Word files need |
 | `src/locale.rs` | Finding the locale, and showing and reading dates and money |
 | `src/logger.rs` | The debug log |
 | `src/update.rs` | Asking GitHub for the latest version number |

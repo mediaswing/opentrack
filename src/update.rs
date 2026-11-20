@@ -5,7 +5,7 @@
 //! this computer is sent beyond what any web request carries. The app never
 //! downloads or installs anything by itself: it says a new version is out and
 //! links to the releases page, which the user opens in their web browser.
-//! Checking when the app starts can be turned off on the Settings tab.
+//! Checking when the app starts can be turned off on the System Settings tab.
 
 use std::sync::OnceLock;
 use std::time::Duration;

@@ -3,10 +3,13 @@
 //! category ids still start at 22, and the same eight starter categories are
 //! added when a new database is created. `price` is stored as whole pence.
 //! A `setting` table, added in schema version 2, keeps the choices made on the
-//! Settings tab. `assets/schema/sqlite.sql` is the whole schema in one file,
+//! System Settings tab. `assets/schema/sqlite.sql` is the whole schema in one file,
 //! and a test checks that it matches what is built here.
 
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::path::Path;
+use std::time::Duration;
 
 use chrono::NaiveDate;
 use rusqlite::{params, Connection, OptionalExtension, Result, TransactionBehavior};
@@ -61,6 +64,15 @@ pub struct Spending {
     pub category: String,
 }
 
+/// An entry to be saved, with its category by name, as an imported file has it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewSpending {
+    pub date: NaiveDate,
+    pub name: String,
+    pub pence: i64,
+    pub category: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct CategoryTotal {
     pub category: String,
@@ -84,6 +96,9 @@ impl Db {
     }
 
     fn init(mut conn: Connection) -> Result<Self> {
+        // A second copy of the app, opened at the same moment, waits its turn
+        // instead of failing with "database is locked" and keeping nothing.
+        conn.busy_timeout(Duration::from_secs(10))?;
         conn.pragma_update(None, "foreign_keys", true)?;
         // Take the write lock before reading the version, so that two copies
         // opening a new database at once don't both try to create it.
@@ -170,6 +185,55 @@ impl Db {
         rows.collect()
     }
 
+    /// Every entry, oldest first.
+    pub fn all_spending(&self) -> Result<Vec<Spending>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.line, s.name, s.date, s.price, c.short
+             FROM spending s JOIN category c ON c.id = s.bucket
+             ORDER BY s.date, s.line",
+        )?;
+        let rows = stmt.query_map([], row_to_spending)?;
+        rows.collect()
+    }
+
+    /// Which of `names` aren't categories yet, each once, in the order given.
+    /// Names are matched as the database matches them: ignoring the case of
+    /// A to Z.
+    pub fn missing_categories<'a>(&self, names: impl IntoIterator<Item = &'a str>) -> Result<Vec<String>> {
+        let mut known: HashMap<String, i64> = category_ids(&self.categories()?);
+        let mut missing = Vec::new();
+        for name in names {
+            if known.insert(name.to_ascii_lowercase(), 0).is_none() {
+                missing.push(name.to_owned());
+            }
+        }
+        Ok(missing)
+    }
+
+    /// Adds `categories` that don't exist yet, then `entries`, each with the
+    /// category it names, which is added too if need be. Either all of it is
+    /// saved or, if anything fails, none of it. Returns the categories added.
+    pub fn import(&self, categories: &[String], entries: &[NewSpending]) -> Result<Vec<String>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut ids = category_ids(&self.categories()?);
+        let mut added = Vec::new();
+        let mut insert = tx.prepare("INSERT INTO spending (name, date, price, bucket) VALUES (?1, ?2, ?3, ?4)")?;
+        let wanted = categories.iter().map(String::as_str).chain(entries.iter().map(|e| e.category.as_str()));
+        for name in wanted {
+            if let Entry::Vacant(slot) = ids.entry(name.to_ascii_lowercase()) {
+                tx.execute("INSERT INTO category (short) VALUES (?1)", params![name])?;
+                slot.insert(tx.last_insert_rowid());
+                added.push(name.to_owned());
+            }
+        }
+        for e in entries {
+            insert.execute(params![e.name, iso(e.date), e.pence, ids[&e.category.to_ascii_lowercase()]])?;
+        }
+        drop(insert);
+        tx.commit()?;
+        Ok(added)
+    }
+
     /// Totals per category between two dates, largest first.
     pub fn totals_between(&self, from: NaiveDate, to: NaiveDate) -> Result<Vec<CategoryTotal>> {
         let mut stmt = self.conn.prepare(
@@ -184,6 +248,11 @@ impl Db {
         })?;
         rows.collect()
     }
+}
+
+/// Category ids by name, in lower case.
+fn category_ids(categories: &[Category]) -> HashMap<String, i64> {
+    categories.iter().map(|c| (c.short.to_ascii_lowercase(), c.id)).collect()
 }
 
 fn iso(d: NaiveDate) -> String {
@@ -303,6 +372,37 @@ mod tests {
         sample.execute_batch(include_str!("../assets/schema/sqlite.sql")).unwrap();
         let real = Db::open_in_memory().unwrap();
         assert_eq!(shape(&sample), shape(&real.conn));
+    }
+
+    fn new(date: &str, name: &str, pence: i64, category: &str) -> NewSpending {
+        NewSpending { date: d(date), name: name.to_owned(), pence, category: category.to_owned() }
+    }
+
+    #[test]
+    fn importing_adds_entries_and_missing_categories() {
+        let db = Db::open_in_memory().unwrap();
+        let entries = [
+            new("2026-10-01", "Tea", 250, "food and drink"),
+            new("2026-11-02", "Lead", 1000, "Pets"),
+            new("2026-11-03", "Food", 800, "PETS"),
+        ];
+        let wanted = ["Gifts".to_owned()];
+        let missing = db.missing_categories(wanted.iter().map(String::as_str).chain(entries.iter().map(|e| e.category.as_str())));
+        assert_eq!(missing.unwrap(), ["Gifts", "Pets"]);
+        assert_eq!(db.import(&wanted, &entries).unwrap(), ["Gifts", "Pets"]);
+        let all = db.all_spending().unwrap();
+        assert_eq!(all.iter().map(|s| s.category.as_str()).collect::<Vec<_>>(), ["Food and Drink", "Pets", "Pets"]);
+        assert_eq!(db.categories().unwrap().len(), 10);
+    }
+
+    #[test]
+    fn a_failed_import_saves_nothing() {
+        let db = Db::open_in_memory().unwrap();
+        // The second name is too long for the database.
+        let entries = [new("2026-10-01", "Tea", 250, "Pets"), new("2026-10-02", &"x".repeat(161), 1, "Pets")];
+        assert!(db.import(&[], &entries).is_err());
+        assert!(db.all_spending().unwrap().is_empty());
+        assert_eq!(db.categories().unwrap().len(), 8, "the new category went too");
     }
 
     #[test]

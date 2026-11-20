@@ -9,7 +9,7 @@ impl App {
     pub(super) fn categories_tab(&mut self, ui: &mut Ui) {
         heading(ui, "Categories", 2);
         ui.label(format!(
-            "There are {}. Each piece of spending goes in one, which you choose on the Add Spending tab.",
+            "There are {}. Each piece of spending goes in one, which you choose on the Spending tab.",
             plural(self.categories.len(), "category", "categories")
         ));
         let names: Vec<&str> = self.categories.iter().map(|c| c.short.as_str()).collect();
@@ -41,7 +41,7 @@ impl App {
                 log::info!("added category {id}");
                 self.new_category.clear();
                 self.refresh();
-                self.set_info(format!("Added the category {name}. You can choose it on the Add Spending tab."));
+                self.set_info(format!("Added the category {name}. You can choose it on the Spending tab."));
             }
             Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == rusqlite::ErrorCode::ConstraintViolation => {
                 self.set_error(format!("There is already a category called {name}."));

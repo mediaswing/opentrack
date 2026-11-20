@@ -1,16 +1,16 @@
-//! The Add Spending tab: what was bought, how much, when, and its category.
+//! Adding spending, at the top of the Spending tab: what was bought, how
+//! much, when, and its category.
 
-use chrono::{Datelike, Duration, NaiveDate};
 use egui::{Key, Ui};
 
-use super::widgets::{dropdown, full_button, heading, text_field};
+use super::widgets::{dropdown_and_button, heading, text_field};
 use super::{App, Tab, shortcuts, today};
 use crate::db::Spending;
-use crate::locale::DateOrder;
+use crate::locale::parse_date;
 
 impl App {
-    pub(super) fn add_tab(&mut self, ui: &mut Ui) {
-        heading(ui, "Add Spending", 2);
+    pub(super) fn add_section(&mut self, ui: &mut Ui) {
+        heading(ui, "Add Spending", 3);
         let name = text_field(ui, "What you bought", "name", &mut self.name_input);
         if self.wants_focus("name") {
             name.request_focus();
@@ -26,13 +26,20 @@ impl App {
             date.request_focus();
         }
         let names: Vec<String> = self.categories.iter().map(|c| c.short.clone()).collect();
-        let (_, category) = dropdown(ui, "category", "Category", &names, &mut self.category_index);
+        let (_, category, save) = dropdown_and_button(
+            ui,
+            "category",
+            "Category",
+            &names,
+            &mut self.category_index,
+            ("save", "Save spending", Some(&shortcuts::SAVE)),
+        );
         if self.wants_focus("category") {
             category.request_focus();
         }
         // Enter in any of the boxes saves, as the button does.
         let entered = [&name, &amount, &date].iter().any(|r| r.lost_focus()) && ui.input(|i| i.key_pressed(Key::Enter));
-        if full_button(ui, "save", "Save spending", Some(&shortcuts::SAVE)).clicked() || entered {
+        if save.clicked() || entered {
             self.save_spending();
         }
     }
@@ -82,7 +89,7 @@ impl App {
                 self.refresh();
                 self.set_info(saved);
                 // Ready for the next one.
-                if self.tab == Tab::Add {
+                if self.tab == Tab::Spending {
                     self.focus_wanted = Some("name");
                 }
             }
@@ -91,69 +98,5 @@ impl App {
                 self.set_error(format!("The spending could not be saved: {e}."));
             }
         }
-    }
-}
-
-/// Parse a typed date. Numbers may be separated by any non-digit character. A
-/// four-digit first number means year first; otherwise the locale's order is
-/// used. A missing year means the current year, and empty means today.
-pub(super) fn parse_date(text: &str, today: NaiveDate, order: DateOrder) -> Result<NaiveDate, ()> {
-    let t = text.trim().to_lowercase();
-    match t.as_str() {
-        "" | "today" => return Ok(today),
-        "yesterday" => return Ok(today - Duration::days(1)),
-        _ => {}
-    }
-    // Words such as "soon" are not dates; non-Latin date markers (年, 月) are fine.
-    if t.chars().any(|c| c.is_ascii_alphabetic()) {
-        return Err(());
-    }
-    let parts: Vec<&str> = t.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty()).collect();
-    // Anything longer than four digits can't be part of a date.
-    if parts.iter().any(|p| p.len() > 4) {
-        return Err(());
-    }
-    let nums: Vec<i32> = parts.iter().map(|p| p.parse().map_err(|_| ())).collect::<Result<_, _>>()?;
-    let year = |y: i32, digits: usize| if digits <= 2 { 2000 + y } else { y };
-    let (y, m, d) = match (nums.as_slice(), order) {
-        ([y, m, d], _) if parts[0].len() == 4 => (*y, *m, *d),
-        ([a, b, c], DateOrder::YearMonthDay) => (year(*a, parts[0].len()), *b, *c),
-        ([a, b, c], DateOrder::MonthDayYear) => (year(*c, parts[2].len()), *a, *b),
-        ([a, b, c], DateOrder::DayMonthYear) => (year(*c, parts[2].len()), *b, *a),
-        ([a, b], DateOrder::DayMonthYear) => (today.year(), *b, *a),
-        ([a, b], _) => (today.year(), *a, *b),
-        _ => return Err(()),
-    };
-    let (m, d) = (u32::try_from(m).map_err(|_| ())?, u32::try_from(d).map_err(|_| ())?);
-    NaiveDate::from_ymd_opt(y, m, d).ok_or(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, day).unwrap()
-    }
-
-    #[test]
-    fn dates() {
-        let today = d(2026, 11, 18);
-        let dmy = DateOrder::DayMonthYear;
-        let mdy = DateOrder::MonthDayYear;
-        assert_eq!(parse_date("", today, dmy), Ok(today));
-        assert_eq!(parse_date("Yesterday", today, dmy), Ok(d(2026, 11, 17)));
-        assert_eq!(parse_date("2026-01-05", today, mdy), Ok(d(2026, 1, 5)));
-        assert_eq!(parse_date("5/1/2026", today, dmy), Ok(d(2026, 1, 5)));
-        assert_eq!(parse_date("5/1/2026", today, mdy), Ok(d(2026, 5, 1)));
-        assert_eq!(parse_date("5.1.26", today, dmy), Ok(d(2026, 1, 5)));
-        assert_eq!(parse_date("5/1", today, dmy), Ok(d(2026, 1, 5)));
-        assert_eq!(parse_date("5/1", today, mdy), Ok(d(2026, 5, 1)));
-        assert_eq!(parse_date("2026年11月18日", today, DateOrder::YearMonthDay), Ok(today));
-        assert_eq!(parse_date("26-11-18", today, DateOrder::YearMonthDay), Ok(today));
-        assert!(parse_date("18/4294967297/2026", today, dmy).is_err());
-        assert!(parse_date("31/02/2026", today, dmy).is_err());
-        assert!(parse_date("soon", today, dmy).is_err());
-        assert!(parse_date("5", today, dmy).is_err());
     }
 }

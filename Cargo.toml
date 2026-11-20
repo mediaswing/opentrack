@@ -23,12 +23,20 @@ eframe = { version = "0.37", default-features = false, features = ["accesskit", 
 egui = { version = "0.37", features = ["monochrome_emoji_fonts"] }
 rfd = "0.17"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std", "unstable-locales"] }
+# Checksums for the .docx (zip) writer.
+crc32fast = "1"
+# Reads and writes the CSV files on the Import/Export tab.
+csv = "1.4"
 dirs = "7.0.0"
+# Compresses PDF streams and .docx parts.
+flate2 = "1"
 log = { version = "0.4.35", features = ["std"] }
 pure-rust-locales = "0.8.2"
 rusqlite = { version = "0.43.0", features = ["bundled"] }
 serde_json = "1"
 sys-locale = "0.3.2"
+# Glyphs and their widths, for embedding the Ubuntu fonts in PDF reports.
+ttf-parser = "0.25"
 # Asks GitHub for the latest version number, and nothing else.
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 
